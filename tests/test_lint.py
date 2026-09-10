@@ -34,7 +34,7 @@ def test_lint(testbook__directory: Path, work__directory: Path, lint_subtype: st
 	in_directory = test_directory / "in"
 	book_directory = assemble_testbook(testbook__directory, in_directory, work__directory)
 
-	result = run(f"se --plain lint {book_directory}")
+	result = run(f"sach --plain lint {book_directory}")
 
 	# All books with errors should return a non-zero return code
 	if result.returncode == 0:

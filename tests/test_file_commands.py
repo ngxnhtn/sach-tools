@@ -71,5 +71,5 @@ def test_file_commands(work__directory: Path, command: str, test: Path, update_g
 		monkeypatch.setenv("XDG_CONFIG_HOME", str(work__directory / "config"))
 
 	# run the command on that file and verify the output
-	must_run(f"se {command_to_use}")
+	must_run(f"sach {command_to_use}")
 	files_are_golden(command, in_directory, work__directory, golden_directory, update_golden, test_context)

@@ -1,0 +1,107 @@
+"""
+This module implements the `se build-ids` command.
+"""
+
+import argparse
+
+import regex
+
+import sach
+from sach.sach_help_formatter import SachHelpFormatter
+import sach.easy_xml
+import sach.formatting
+from sach.sach_epub import SachEpub
+from sach.sach_epub_lint import files_not_in_spine
+
+def build_ids(plain_output: bool) -> int:
+	"""
+	Entry point for `se build-ids`.
+	"""
+
+	parser = argparse.ArgumentParser(description="Change [attr]@id[/] attributes for non-sectioning content to their expected values across the entire ebook. IDs must be globally unique and correctly referenced, and the ebook spine must be complete.", prog="[command]sach[/] [subcommand]build-ids[/]", formatter_class=SachHelpFormatter)
+	parser.add_argument("-n", "--no-endnotes", action="store_true", help="Exclude endnotes.")
+	parser.add_argument("-v", "--verbose", action="store_true", help="Increase output verbosity.")
+	parser.add_argument("directories", metavar="[path]DIRECTORY[/]", nargs="+", help="A Vietnamese ebook source directory.")
+	args = parser.parse_args()
+
+	console = sach.init_console()
+
+	for directory in args.directories:
+		try:
+			if args.verbose:
+				console.print(sach.prep_output(f"Processing [path][link=file://{directory}]{directory}[/][/] ...", plain_output), end="")
+
+			sach_epub = SachEpub(directory)
+
+			# First, check for spine sanity: no point in proceeding if it’s not correct.
+			missing_spine_files = files_not_in_spine(sach_epub)
+			if missing_spine_files:
+				missing_spine_file_list = ", ".join([file.name for file in missing_spine_files])
+				raise sach.InvalidSachEbookException(f"Additional files not in spine: {missing_spine_file_list}")
+
+			replacements: list[tuple[sach.easy_xml.EasyXmlElement, str]] = []
+			id_counter = 0
+
+			# Get a list of IDs that need to be replaced across the ebook.
+			for filename in sach_epub.spine_file_paths:
+				dom = sach_epub.get_dom(filename)
+
+				# First, get a list of all eligible elements with an ID.
+				# We want to wipe their IDs so that we don't accidentally introduce duplicates.
+				if args.no_endnotes:
+					nodes = dom.xpath("//*[@id and not(re:test(@epub:type, '\\bnoteref\\b')) and not(re:test(local-name(), '(section|article|nav|figure|dt|tr)')) and not(./parent::ol/parent::section[re:test(@epub:type, '\\bendnotes\\b')])]")
+				else:
+					nodes = dom.xpath("//*[@id and not(re:test(@epub:type, '\\bnoteref\\b')) and not(re:test(local-name(), '(section|article|nav|figure|dt|tr)'))]")
+
+				for node in nodes:
+					old_id = node.get_attr("id")
+					new_id = f"se-replacement-id-{id_counter}"
+					node.set_attr("id", new_id)
+
+					# Match references in other files.
+					for other_file in sach_epub.spine_file_paths:
+						other_file_dom = sach_epub.get_dom(other_file)
+						write_to_disk = False
+						for other_node in other_file_dom.xpath(f"/html/body//a[re:test(@href, '#{old_id}$')]"):
+							other_node.set_attr("href", regex.sub(fr"#{old_id}$", f"#{new_id}", other_node.get_attr("href")))
+							write_to_disk = True
+
+						# If we changed this file, make sure to write it to disk.
+						if write_to_disk:
+							with open(other_file, "w", encoding="utf-8") as file:
+								file.write(other_file_dom.to_string())
+
+					id_counter = id_counter + 1
+
+				# Now, get a list of what we expect all eligible IDs to be.
+				replacements += sach.formatting.find_unexpected_ids(dom, args.no_endnotes)
+
+				# Write our wiped file, we'll update it later.
+				with open(filename, "w", encoding="utf-8") as file:
+					file.write(dom.to_string())
+
+			# Now, actually perform the replacements.
+			# Make sure to include the glossary search key map, if present.
+			files = sach_epub.spine_file_paths
+			if sach_epub.glossary_search_key_map_path:
+				files.append(sach_epub.glossary_search_key_map_path)
+
+			for filename in files:
+				with open(filename, "r+", encoding="utf-8") as file:
+					file_contents = file.read()
+
+					for node, new_id in replacements:
+						file_contents = regex.sub(fr"( id=\"|#){node.get_attr('id')}\"",  fr'\1{new_id}"', file_contents)
+
+					file.seek(0)
+					file.write(file_contents)
+					file.truncate()
+
+			if args.verbose:
+				console.print(" done.")
+
+		except sach.SachException as ex:
+			sach.print_error(ex)
+			return ex.code
+
+	return 0

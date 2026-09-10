@@ -1,0 +1,2188 @@
+#!/usr/bin/env python3
+"""
+This module contains the build function.
+
+Strictly speaking, the `build()` function should be a class member of `SachEpub`. But the function is very big and it makes editing easier to put it in a separate file.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+from collections import defaultdict
+from contextlib import ExitStack
+from copy import deepcopy
+from datetime import datetime
+from hashlib import sha1, sha256
+from html import unescape
+from pathlib import Path
+import importlib.resources
+from typing import TYPE_CHECKING, cast
+
+import cairosvg
+from cairosvg import svg2png # type: ignore Not going to hand-write the type hint for this crazy huge function right now.
+from PIL import Image
+import lxml.cssselect
+from lxml import etree
+import regex
+
+import sach
+import sach.epub
+import sach.formatting
+import sach.images
+import sach.typography
+from sach.easy_xml import EasyXmlElement, EasyXmlTree
+from sach.sach_epub import SachEpub, GitCommit # pylint: disable=cyclic-import
+from sach.vendor.calibre_azw3 import convert_epub_to_azw3
+from sach.vendor.kobo_touch_extended import kobo
+
+if TYPE_CHECKING:
+	from sach.browser import Browser
+
+
+COVER_THUMBNAIL_WIDTH = int(sach.COVER_WIDTH / 4) # Cast to int required for PIL.
+COVER_THUMBNAIL_HEIGHT = int(sach.COVER_HEIGHT / 4) # Cast to int required for PIL.
+SVG_OUTER_STROKE_WIDTH = 2
+SVG_TITLEPAGE_OUTER_STROKE_WIDTH = 4
+SVG_CANONICAL_VIEWPORT_WIDTH = 700 # Viewport width at which to render a whole page when calculating the width that we should raster SVGs to PNGs at.
+ENDNOTE_CHUNK_SIZE = 500
+SACH_LOGO_SVG_SHA256 = "ab04478bf16d277777374e29abf5146be957cc7b49394ec9f4ceb2ea1becb367" # This is the sha256 sum of copy of `logo.svg` that we modifed during the build process, with paths outlined for dark mode compatibility.
+
+# See <https://www.w3.org/TR/dpub-aria-1.0/>.
+# Without preceding `doc-`.
+ARIA_ROLES = ["abstract", "acknowledgments", "afterword", "appendix", "backlink", "bibliography", "biblioref", "chapter", "colophon", "conclusion", "cover", "credit", "credits", "dedication", "endnotes", "epigraph", "epilogue", "errata", "example", "footnote", "foreword", "glossary", "glossref", "index", "introduction", "noteref", "notice", "pagebreak", "pagelist", "part", "preface", "prologue", "pullquote", "qna", "subtitle", "tip", "toc"]
+
+
+class BuildMessage:
+	"""
+	An object representing an output message for the build function.
+
+	Contains information like message text, severity, and the epub filename that generated the message.
+	"""
+
+	def __init__(self, source: str, code: str, text: str, filename: Path | None = None, line: int | None = None, col: int | None = None, submessages: list[str] | None = None):
+		self.source = source
+		self.code = code
+		self.text = text.strip()
+		self.filename = filename
+		self.line = line
+		self.col = col
+		self.location = f"({line}:{col})" if self.line and self.col else None
+		self.link_location = sach.format_line_number(line, col) if line is not None else None
+		self.submessages = submessages if submessages else []
+
+def get_file_sha256(filename: Path) -> str:
+	"""
+	Return the SHA-256 hash of a file.
+
+	See <https://stackoverflow.com/a/44873382>.
+
+	# TODO: On Python 3.11+, replace this function with `file_digest()`.
+	"""
+
+	h = sha256()
+	b = bytearray(128 * 1024)
+	mv = memoryview(b)
+	with open(filename, "rb", buffering=0) as f:
+		while n := f.readinto(mv):
+			h.update(mv[:n])
+
+	return h.hexdigest()
+
+def __convert_image(input_path: Path, output_path: Path, scale: int, build_cache_images_directory: Path|None, output_width: int|None=None) -> Path | None:
+	"""
+	Convert an image from one format to another, using a local cache to speed up repeat operations if possible.
+
+	INPUTS
+	input_path: The path to the image to convert from.
+	output_path: The path to the image to convert to.
+	scale: The output scale.
+	build_cache_images_directory: The images cache directory for this ebook, or `None` to disable the cache.
+	output_width: The desired 1x output width for SVG-to-PNG conversions, or `None` to use the SVG intrinsic width.
+
+	OUTPUTS
+	The paths to cache entry for the created image, or `None` if the cache is disabled.
+	"""
+	cache_path = None
+
+	# TODO: On Python 3.11+, use the following to calculate file hash:
+	# with open(input_path, 'rb', buffering=0) as file:
+	#	input_file_sha256 = file_digest(file, 'sha256').hexdigest()
+
+	input_file_sha256 = get_file_sha256(input_path)
+
+	if build_cache_images_directory:
+		try:
+			cache_key = "\n".join((
+				"sha256=" + input_file_sha256,
+				"suffix=" + input_path.suffix,
+				"scale=" + str(scale),
+				"output-width=" + str(output_width),
+				"oxipng-level=" + str(sach.images.OXIPNG_OPTIMIZATION_LEVEL),
+				"cairosvg-version=" + getattr(cairosvg, "__version__", "unknown"),
+				"pillow-version=" + getattr(Image, "__version__", "unknown")
+			))
+
+			cache_key = sha256(cache_key.encode("utf-8")).hexdigest()
+
+			cache_path = build_cache_images_directory / (cache_key + output_path.suffix)
+		except Exception:
+			cache_path = None
+
+	try:
+		if cache_path and cache_path.exists():
+			shutil.copyfile(cache_path, output_path)
+			return cache_path
+	except Exception:
+		pass
+
+	if input_path.suffix == ".svg" and output_path.suffix == ".png":
+		if output_width is None and input_file_sha256 == SACH_LOGO_SVG_SHA256:
+			if scale == 1:
+				with importlib.resources.as_file(importlib.resources.files("sach.data.templates").joinpath("logo.png")) as logo_png_path:
+					shutil.copyfile(logo_png_path, output_path)
+
+			elif scale == 2:
+				with importlib.resources.as_file(importlib.resources.files("sach.data.templates").joinpath("logo-2x.png")) as logo_png_path:
+					shutil.copyfile(logo_png_path, output_path)
+
+			return None
+
+		if output_width:
+			svg2png(url=str(input_path), write_to=str(output_path), output_width=output_width * scale)
+		elif scale == 1:
+			svg2png(url=str(input_path), write_to=str(output_path))
+		else:
+			svg2png(url=str(input_path), write_to=str(output_path), scale=scale)
+
+		sach.images.optimize_png(output_path)
+
+	elif input_path.suffix in (".svg", ".png") and output_path.suffix == ".jpg":
+		# If the input file is an SVG and the output file is a JPG, we have to convert SVG -> PNG -> JPG.
+		if input_path.suffix == ".svg":
+			# Use a temporary directory with a fixed name instead of a named temporary file, because Windows will lock the file and Cairo will be unable to write to it.
+			with tempfile.TemporaryDirectory() as temp_directory:
+				png_path = Path(temp_directory) / "cover.png"
+				svg2png(url=str(input_path), write_to=str(png_path))
+
+				cover_file = Image.open(png_path)
+				cover_image = cover_file.convert("RGB") # Remove alpha channel from PNG if necessary.
+				cover_image.save(output_path)
+
+		else:
+			cover_file = Image.open(input_path)
+			cover_image = cover_file.convert("RGB") # Remove alpha channel from PNG if necessary.
+			cover_image.save(output_path)
+
+	if cache_path:
+		try:
+			shutil.copyfile(output_path, cache_path)
+		except Exception:
+			pass
+
+	return cache_path
+
+def __convert_mathml_to_png(mathml_fragment: str, output_path: Path, output_path_2x: Path, build_cache_images_directory: Path|None, browser: 'Browser|None') -> tuple[set[Path], 'Browser|None']:
+	"""
+	Convert a MathML fragment to PNG images, using a local cache to speed up repeat operations if possible.
+
+	We break this out into a separate function instead of putting it in `__convert_image()` because this function creates two scaled images at once to minimize usage of the browser.
+
+	INPUTS
+	mathml_fragment: The MathML fragment to convert.
+	output_path: The path to the 1x PNG to create.
+	output_path_2x: The path to the 2x PNG to create.
+	build_cache_images_directory: The images cache directory for this ebook, or `None` to disable the cache.
+	browser: A browser to reuse, or `None` if one has not been initialized yet.
+
+	OUTPUTS
+	The paths to cache entries for the created images, and the browser to reuse.
+	"""
+
+	current_cache_paths: set[Path] = set()
+	cache_paths: dict[int, Path] = {}
+	mathml_fragment_sha256 = sha256(mathml_fragment.encode("utf-8")).hexdigest()
+
+	if build_cache_images_directory:
+		for scale, output_filename in ((1, output_path), (2, output_path_2x)):
+			try:
+				cache_key = "\n".join((
+					"sha256=" + mathml_fragment_sha256,
+					"suffix=.png",
+					"scale=" + str(scale),
+					"oxipng-level=" + str(sach.images.OXIPNG_OPTIMIZATION_LEVEL),
+					"pillow-version=" + getattr(Image, "__version__", "unknown")
+				))
+
+				cache_key = sha256(cache_key.encode("utf-8")).hexdigest()
+				cache_paths[scale] = build_cache_images_directory / (cache_key + output_filename.suffix)
+			except Exception:
+				cache_paths = {}
+				break
+
+	try:
+		if cache_paths and all(cache_path.exists() for cache_path in cache_paths.values()):
+			shutil.copyfile(cache_paths[1], output_path)
+			shutil.copyfile(cache_paths[2], output_path_2x)
+			return set(cache_paths.values()), browser
+	except Exception:
+		pass
+
+	if browser is None:
+		# We import this late because we don't want to load selenium if we're not going to use it.
+		from sach.browser import Browser # pylint: disable=import-outside-toplevel
+
+		browser = Browser()
+
+	# `render_mathml_to_png()` screenshots the 2x image once, then downscales it to create the 1x image.
+	sach.images.render_mathml_to_png(browser, mathml_fragment, output_path, output_path_2x)
+
+	for scale, output_filename in ((1, output_path), (2, output_path_2x)):
+		cache_path = cache_paths.get(scale)
+		if cache_path:
+			try:
+				shutil.copyfile(output_filename, cache_path)
+				current_cache_paths.add(cache_path)
+			except Exception:
+				pass
+
+	return current_cache_paths, browser
+
+def __save_debug_epub(work_compatible_epub_dir: Path) -> Path:
+	"""
+	Copy the given epub directory to a fixed SE temp directory, and return the path to that directory.
+
+	INPUTS
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+
+	OUTPUTS
+	epub_temp_dir: Path to the temporary directory where the output files have been saved.
+	"""
+
+	se_temp_dir = Path(tempfile.gettempdir() + "/se")
+	se_temp_dir.mkdir(exist_ok=True)
+	epub_temp_dir = se_temp_dir / work_compatible_epub_dir.name
+
+	# Remove the dir if it currently exists.
+	shutil.rmtree(epub_temp_dir, ignore_errors=True)
+
+	# Copy the epub output into the temp dir.
+	shutil.copytree(work_compatible_epub_dir, str(epub_temp_dir))
+
+	return epub_temp_dir
+
+def _add_metadata(metadata_dom: EasyXmlTree, last_commit: GitCommit|None,  build_type: str) -> EasyXmlTree:
+	"""
+	Add or update the `schema:version` metadata in the metadata file.
+
+	INPUTS
+	metadata_dom: DOM of the metadata file.
+	commit_sha: The SHA of the Git commit used to build this ebook.
+	build_type: The type of build, one of `epub`, `epub/compatible`, `kobo`, `azw3`.
+
+	OUTPUTS
+	metadata_dom: The updated DOM of the metadata file.
+	"""
+
+	version_string = f"{sach.VERSION}-{build_type}"
+
+	if last_commit:
+		version_string = f"{last_commit.sha}-{version_string}"
+
+	nodes = metadata_dom.xpath("/package/metadata/meta[@property='schema:version']")
+
+	if nodes:
+		for node in nodes:
+			node.set_text(version_string)
+	else:
+		metadata_elements = metadata_dom.xpath("/package/metadata")
+
+		if metadata_elements:
+			metadata_elements[0].prepend(etree.fromstring(f"""<meta property="schema:version">{version_string}</meta>"""))
+
+	return metadata_dom
+
+def _add_proof_css(work_compatible_epub_dir: Path) -> None:
+	"""
+	Add the proofreading CSS to the local CSS file.
+
+	INPUTS
+	work_compatible_epub_dir: Path in the temporary working directory to the epub file.
+
+	OUTPUTS
+	None.
+	"""
+
+	with open(work_compatible_epub_dir / "epub" / "css" / "local.css", "a", encoding="utf-8") as local_css_file:
+		with importlib.resources.files("sach.data.templates").joinpath("proofreading.css").open("r", encoding="utf-8") as proofreading_css_file:
+			local_css_file.write("\n" + proofreading_css_file.read())
+
+	# Wrap no-break hyphens and no-break spaces in a class that will colorize them when proofing.
+	for file_path in work_compatible_epub_dir.glob("**/*.xhtml"):
+		with open(file_path, "r+", encoding="utf-8") as file:
+			xhtml = file.read()
+
+			xhtml = regex.sub(fr"([{sach.NO_BREAK_HYPHEN}{sach.NO_BREAK_SPACE}])", r"""<span class="proofreading">\1</span>""", xhtml)
+			file.seek(0)
+			file.write(sach.formatting.simplify_css(xhtml))
+			file.truncate()
+
+def _update_release_date(self: 'SachEpub', work_compatible_epub_dir: Path, metadata_dom: EasyXmlTree) -> datetime | None:
+	"""
+	Update the release date in the metadata and colophon with the last commit date of the repository.
+
+	INPUTS
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+	metadata_dom: dom of the metadata file.
+
+	OUTPUTS
+	last_updated: timestamp of the last commit date (if any).
+	"""
+
+	last_updated = None
+	if self.last_commit and self.last_commit.timestamp:
+		for file_path in work_compatible_epub_dir.glob("**/*.xhtml"):
+			dom = self.get_dom(file_path)
+
+			if dom.xpath("/html/body//section[contains(@epub:type, 'colophon')]"):
+				last_updated = self.last_commit.timestamp
+
+				last_updated_iso = sach.formatting.generate_iso_timestamp(last_updated)
+				last_updated_friendly = sach.formatting.generate_colophon_timestamp(last_updated)
+
+				# Set modified date in the metadata file.
+				for node in metadata_dom.xpath("//meta[@property='dcterms:modified']"):
+					node.set_text(last_updated_iso)
+
+				with open(work_compatible_epub_dir / "epub" / self.metadata_file_path.name, "w", encoding="utf-8") as file:
+					file.write(metadata_dom.to_string())
+
+				# Update the colophon with release info.
+				with open(file_path, "r+", encoding="utf-8") as file:
+					xhtml = file.read()
+
+					xhtml = xhtml.replace("<p>The first edition of this ebook was released on<br/>", f"<p>This edition was released on<br/>\n\t\t\t<b><time datetime=\"{last_updated_iso}\">{last_updated_friendly}</time></b><br/>\n\t\t\tand is based on<br/>\n\t\t\t<b>revision {self.last_commit.short_sha}</b>.<br/>\n\t\t\tThe first edition of this ebook was released on<br/>")
+
+					file.seek(0)
+					file.write(xhtml)
+					file.truncate()
+
+				self.flush_dom(file_path)
+				break
+
+	return last_updated
+
+def _add_compatibility_css_and_simplify(self: 'SachEpub', work_compatible_epub_dir: Path) -> None:
+	"""
+	Add compatibility CSS to the local CSS file; modify the CSS to convert several types of
+	selectors to classes, and add those classes to the appropriate elements in the text files.
+
+	INPUTS
+	self.
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+
+	OUTPUTS
+	None.
+	"""
+
+	# Include compatibility CSS.
+	compatibility_css_filename = "compatibility.css"
+	if not self.metadata_dom.xpath("//dc:identifier[starts-with(., 'https://standardebooks.org')]"):
+		compatibility_css_filename = "compatibility-white-label.css"
+
+	with open(work_compatible_epub_dir / "epub" / "css" / "core.css", "a", encoding="utf-8") as css_file:
+		with importlib.resources.files("sach.data.templates").joinpath(compatibility_css_filename).open("r", encoding="utf-8") as compatibility_css_file:
+			css_file.write("\n\n" + compatibility_css_file.read())
+
+	# Simplify the CSS first.
+	total_css = ""
+
+	for file_path in work_compatible_epub_dir.glob("**/*.css"):
+		with open(file_path, "r+", encoding="utf-8") as file:
+			css = file.read()
+
+			total_css = total_css + css + "\n"
+			file.seek(0)
+			file.write(sach.formatting.simplify_css(css))
+			file.truncate()
+
+	# Now get a list of original selectors into a variable.
+	# Remove `@supports` and `@media` queries.
+	total_css = regex.sub(r"@\s*(?:supports|media).+?{(.+?)}\s*}", r"\1}", total_css, flags=regex.DOTALL)
+
+	# Remove CSS rules.
+	total_css = regex.sub(r"{[^}]+}", "", total_css)
+
+	# Remove trailing commas.
+	total_css = regex.sub(r",", "", total_css)
+
+	# Remove comments.
+	total_css = regex.sub(r"/\*.+?\*/", "", total_css, flags=regex.DOTALL)
+
+	# Remove `@` defines.
+	total_css = regex.sub(r"^@.+", "", total_css, flags=regex.MULTILINE)
+
+	# Construct a dictionary of the original selectors.
+	selectors = {line for line in total_css.splitlines() if line != ""}
+
+	# Now that we have a unique list of CSS selectors, identify the ones that contain elements we want to use classes for instead.
+	namespace_selectors: dict[str, str] = {}
+	pseudo_class_selectors: dict[str, str] = {}
+	for selector in selectors:
+		# Determine if this selector has a namespace, e.g. `xml|lang`, in it.
+		if regex.search(r"\[[a-z]+\|[a-z]+", selector):
+			# If so, find all namespace occurrences and create a corresponding class for each one.
+			for namespace_selector in regex.findall(r"\[[a-z]+\|[a-z]+(?:[\~\^\|\$\*]?\=\"[^\"]*?\")?\]", selector):
+				new_class = regex.sub(r"^\.", "", sach.formatting.css_selector_to_class(namespace_selector))
+				namespace_selectors[namespace_selector] = new_class
+
+		for pseudo_class in sach.PSEUDO_CLASSES_TO_SIMPLIFY:
+			# A selector can contain more than one instance of the pseudo-class, e.g. `table:first-of-type tr td:first-of-type`; process all of them, one at a time.
+			while pseudo_class in selector:
+				# The pseudo-class we’re simplifying might not be at the end of the selector, so temporarily remove the trailing part to target the right elements.
+				split_selector = regex.split(fr"({pseudo_class}(\(.*?\))?)", selector, 1)
+				target_element_selector = "".join(split_selector[0:2])
+
+				new_class = sach.formatting.css_selector_to_class(split_selector[1])
+				pseudo_class_selectors[target_element_selector] = new_class
+				# Set the selector to the remainder and loop to see if it matches.
+				selector = selector.replace(split_selector[1], "." + new_class, 1)
+
+	# For every XHTML file, identify any elements that are targeted by any of the selectors we've collected, and add the associated class.
+	for file_path in work_compatible_epub_dir.glob("**/*.xhtml"):
+		dom = self.get_dom(file_path)
+
+		# Don't mess with the ToC, since if we have `ol/li > first-child` selectors we could screw it up.
+		if dom.xpath("/html/body//nav[contains(@epub:type, 'toc')]"):
+			continue
+
+		# Update any elements selected by one of the namespace selectors with the associated class.
+		try:
+			for selector, new_class in namespace_selectors.items():
+				try:
+					for element in dom.css_select(selector):
+						# If we're targeting `xml:lang` attributes, never add the class to `<html>` or `<body>`.
+						# We were most likely targeting `body [xml|lang]` but since by default we add classes to everything, that could result in `<html>` getting the `xml-lang` class and making everything italics.
+						if selector == "[xml|lang]" and element.tag in ("html", "body"):
+							continue
+
+						class_attribute = element.get_attr("class")
+
+						if not sach.formatting.has_css_class(class_attribute, new_class):
+							element.set_attr("class", f"{class_attribute} {new_class}".strip())
+
+				except lxml.cssselect.SelectorSyntaxError as ex:
+					raise sach.InvalidCssException(f"Couldn’t parse CSS in or near this line: [css]{selector}[/]: {ex}")
+
+			# Update any elements selected by one of the simplified pseudo-class selectors with the associated class.
+			for selector, new_class in pseudo_class_selectors.items():
+				try:
+					for element in dom.css_select(selector):
+						class_attribute = element.get_attr("class")
+
+						if not sach.formatting.has_css_class(class_attribute, new_class):
+							element.set_attr("class", f"{class_attribute} {new_class}".strip())
+
+				except lxml.cssselect.SelectorSyntaxError as ex:
+					raise sach.InvalidCssException(f"Couldn’t parse CSS in or near this line: [css]{selector}[/]: {ex}")
+
+		except lxml.cssselect.ExpressionError:
+			# This gets thrown if we use pseudo-elements, which lxml doesn't support.
+			pass
+
+def _convert_cover_to_jpg(work_compatible_epub_dir: Path, metadata_dom: EasyXmlTree, build_cache_images_directory: Path|None) -> set[Path]:
+	"""
+	Convert the cover to a JPG if it's not one already.
+
+	INPUTS
+	self.
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+	metadata_dom: dom of the metadata file.
+	build_cache_images_directory: The images cache directory for this ebook, or `None` to disable the cache.
+
+	OUTPUTS
+	The paths to cache entries matching all images created.
+	"""
+
+	current_cache_paths: set[Path] = set()
+
+	try:
+		cover_local_path = metadata_dom.xpath("/package/manifest/item[@properties='cover-image'][1]/@href", str)[0]
+	except IndexError:
+		# No cover found.
+		return current_cache_paths
+
+	epub_root_directory = work_compatible_epub_dir / "epub"
+	cover_work_path = epub_root_directory / cover_local_path
+
+	# If the cover isn't a JPG, convert it to one.
+	if cover_work_path.suffix in (".svg", ".png"):
+		cache_path = __convert_image(cover_work_path, epub_root_directory / "images" / "cover.jpg", 1, build_cache_images_directory)
+		if cache_path:
+			current_cache_paths.add(cache_path)
+
+		cover_work_path.unlink()
+
+		# Replace `.svg`/`.png` with `.jpg` in the metadata.
+		for node in metadata_dom.xpath(f"/package/manifest//item[contains(@href, '{cover_local_path}')]"):
+			for name, value in node.lxml_element.items():
+				node.set_attr(name, regex.sub(r"\.(svg|png)$", ".jpg", value))
+
+			node.set_attr("media-type", "image/jpeg")
+
+	return current_cache_paths
+
+def _compatibility_replacements_svg(self: 'SachEpub', file_path: Path) -> None:
+	"""
+	For night mode compatibility, give the logo/titlepage a 1px white stroke attribute.
+
+	INPUTS
+	self.
+	file_path: Path to the file being processed.
+
+	OUTPUTS
+	None.
+	"""
+
+	dom = self.get_dom(file_path)
+
+	# If we're adding stroke to the logo, make sure it's SE files only.
+	# 3rd party files will get mangled.
+	if dom.xpath("/svg/title[contains(., 'Standard Ebooks')]"):
+		if dom.xpath("/svg/title[contains(., 'titlepage')]"):
+			stroke_width = SVG_TITLEPAGE_OUTER_STROKE_WIDTH
+		else:
+			stroke_width = SVG_OUTER_STROKE_WIDTH
+
+		new_elements: list[etree.Element] = []
+
+		# First remove some useless elements.
+		for node in dom.xpath("/svg/*[name() != 'g' and name() != 'path']"):
+			node.remove()
+
+		# Get all path elements and add a white stroke to each one.
+		# We clone each node and add it to a list, which we will insert into the original SVG later.
+		for node in dom.xpath("//path"):
+			style = node.get_attr("style")
+			style = style + f" stroke: #ffffff; stroke-width: {stroke_width}px;"
+
+			node_clone = deepcopy(node)
+			node_clone.set_attr("style", style)
+
+			new_elements.append(node_clone.lxml_element)
+
+		# Now insert the elements we just cloned, before the first `<g>` or `<path>` so that they appear below the original paths.
+		for node in dom.xpath("(//*[name()='g' or name()='path'])[1]"):
+			for element in new_elements:
+				node.lxml_element.addprevious(element)
+
+		if dom.xpath("/svg[@height or @width]"):
+			# If this SVG specifies height/width, then increase height and width by 2 pixels.
+			for node in dom.xpath("/svg[@height]"):
+				new_value = int(node.get_attr("height")) + stroke_width
+				node.set_attr("height", str(new_value))
+
+			for node in dom.xpath("/svg[@width]"):
+				new_value = int(node.get_attr("width")) + stroke_width
+				node.set_attr("width", str(new_value))
+
+			# Add a `<g>` element to translate everything by 1px.
+			fragment = etree.fromstring(str.encode(f"""<g transform="translate({stroke_width / 2}, {stroke_width / 2})"></g>"""))
+
+			for element in reversed(dom.xpath("/svg/*")):
+				fragment.insert(0, element.lxml_element)
+
+			for element in dom.xpath("/svg"):
+				element.lxml_element.insert(0, fragment)
+
+		# All done, write the SVG so that we can convert to PNG.
+		# Force newlines to be `\n` to avoid calculating the wrong hash on Windows, where newlines are `\r\n`.
+		with open(file_path, "w", encoding="utf-8", newline="\n") as file:
+			file.write(dom.to_string())
+
+def _compatibility_replacements_xhtml(self: 'SachEpub', file_path: Path, has_sequential_full_page_figures: bool, endnote_files_to_be_chunked: list[Path]) -> tuple[bool, list[Path]]:
+	"""
+	Make several replacements needed for compatibility epubs.
+
+	INPUTS
+	self.
+	file_path: Path to the file being processed.
+	has_sequential_full_page_figures: True if sequential full-page figures have been found so far.
+	endnote_files_to_be_chunked: List of endnote files that need to be split into smaller parts.
+
+	OUTPUTS
+	2-tuple (has_sequential_full_page_figures, endnote_files_to_be_chunked).
+	"""
+
+	dom = self.get_dom(file_path)
+
+	# Fix any references in the markup to the cover SVG.
+	for node in dom.xpath("/html/body//img[re:test(@src, '\\.svg$')]"):
+		src = node.get_attr("src")
+		if self.cover_path and self.cover_path.name in src:
+			node.set_attr("src", src.replace(".svg", ".jpg"))
+
+	dom = _compatibility_replacements_xhtml_mathml_to_presentational(dom)
+
+	# In the SE titlepage, we hide the `<h1>` and `<p>` elements using CSS, but some ereaders don't support this. This results in the text appearing, and the image appearing just below it. To accomodate these ereaders, simply remove any non-`<img>` nodes from the titlepage in the compatible build.
+	if self.is_se_ebook:
+		nodes = dom.xpath("/html/body//section[re:test(@epub:type, '\\btitlepage\\b')]")
+		if nodes:
+			titlepage_section = nodes[0]
+			title_string = self.generate_title_string()
+
+			for node in titlepage_section.xpath(".//img"):
+				node.set_attr("alt", title_string)
+
+			for node in titlepage_section.xpath("./*[not(self::img)]"):
+				node.remove()
+
+	# Since we added an outlining stroke to the titlepage/publisher logo images, we want to remove the `se:image.color-depth.black-on-transparent` semantic.
+	for node in dom.xpath("/html/body//img[ (contains(@epub:type, 'z3998:publisher-logo') or ancestor-or-self::*[re:test(@epub:type, '\\btitlepage\\b')]) and contains(@epub:type, 'se:image.color-depth.black-on-transparent')]"):
+		node.remove_attr_value("epub:type", "se:image.color-depth.black-on-transparent")
+
+	dom = _compatibility_replacements_xhtml_add_aria_roles(dom)
+
+	# To get popup footnotes in iBooks, we have to add the `footnote` and `footnotes` semantic.
+	# Still required as of 2021-05.
+	# Matching `endnote` will also catch `endnotes`.
+	for node in dom.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]"):
+		node.add_attr_value("epub:type", "footnotes")
+
+		# Remember to get our custom style selectors that we added, too.
+		if "epub-type-endnotes" in node.get_attr("class"):
+			node.add_attr_value("class", "epub-type-footnotes")
+
+	# Add both `endnote` (which is legacy epub vocabulary) and `foonote` semantics to endnote items.
+	for node in dom.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]/ol/li"):
+		if "endnote" not in node.get_attr("epub:type"):
+			node.add_attr_value("epub:type", "endnote")
+
+		node.add_attr_value("epub:type", "footnote")
+
+		# Remember to get our custom style selectors that we added, too.
+		if "epub-type-endnote" in node.get_attr("class"):
+			node.add_attr_value("class", "epub-type-footnote")
+
+	# Include extra lang tag for accessibility compatibility.
+	for node in dom.xpath("//*[@xml:lang]"):
+		node.set_attr("lang", node.get_attr("xml:lang"))
+
+	processed_xhtml = sach.formatting.format_xhtml(dom.to_string())
+
+	if dom.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]"):
+		# iOS renders the left-arrow-hook character as an emoji; this fixes it and forces it to render as text.
+		# See:
+		# - <https://github.com/standardebooks/tools/issues/73>
+		# - <http://mts.io/2015/04/21/unicode-symbol-render-text-emoji/>
+		processed_xhtml = processed_xhtml.replace("\u21a9", "\u21a9\ufe0e")
+
+		# If this is a large endnote file, add it to our list for later processing.
+		try:
+			endnote_count = dom.xpath("count(/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]/ol/li)", float)[0]
+		except IndexError:
+			endnote_count = 0
+
+		if endnote_count > ENDNOTE_CHUNK_SIZE + 100:
+			endnote_files_to_be_chunked.append(file_path)
+
+	# Typography: replace double and triple em dash characters with extra em dashes.
+	processed_xhtml = processed_xhtml.replace("⸺", f"—{sach.WORD_JOINER}—")
+	processed_xhtml = processed_xhtml.replace("⸻", f"—{sach.WORD_JOINER}—{sach.WORD_JOINER}—")
+
+	# Typography: replace some other less common characters.
+	processed_xhtml = processed_xhtml.replace("⅒", "1/10")
+	processed_xhtml = processed_xhtml.replace("℅", "c/o")
+	processed_xhtml = processed_xhtml.replace("✗", "×")
+	processed_xhtml = processed_xhtml.replace("〃", "“")
+	processed_xhtml = processed_xhtml.replace(" ", f"{sach.NO_BREAK_SPACE}{sach.NO_BREAK_SPACE}") # Em-space to two nbsps.
+	processed_xhtml = processed_xhtml.replace("∶", ":")
+
+	# Replace combining vertical line above, used to indicate stressed syllables, with combining acute accent.
+	processed_xhtml = processed_xhtml.replace(fr"{sach.COMBINING_VERTICAL_LINE_ABOVE}", fr"{sach.COMBINING_ACUTE_ACCENT}")
+
+	# Many ereaders don't support the word joiner character (U+2060).
+	# They *do*, however, support the now-deprecated zero-width non-breaking space (U+FEFF).
+	# For epubs, do this replacement. Kindle now seems to handle everything fortunately.
+	processed_xhtml = processed_xhtml.replace(sach.WORD_JOINER, sach.ZERO_WIDTH_SPACE)
+
+	# We've disabled quote-align for now, because it causes more problems than expected.
+	# # Move quotation marks over periods and commas.
+	# # The negative lookahead is to prevent matching `.&hairsp;…`
+	# processed_xhtml = regex.sub(fr"([\\.…,])([’”{sach.HAIR_SPACE}]+)(?!…)", r"""\1<span class="quote-align">\2</span>""", processed_xhtml)
+
+	# # The above replacement may replace text within `<img>` `alt` attributes. Remove those now until no replacements remain, since we may have many matches in the same line.
+	# replacements = 1
+	# while replacements > 0:
+	# 	processed_xhtml, replacements = regex.subn(r"alt=\"([^<>\"]+?)<span class=\"quote-align\">([^<>\"]+?)</span>", r"""alt="\1\2""", processed_xhtml)
+
+	# # Do the same for `<title>` elements.
+	# replacements = 1
+	# while replacements > 0:
+	# 	processed_xhtml, replacements = regex.subn(r"<title>([^<>]+?)<span class=\"quote-align\">([^<>]+?)</span>", r"""<title>\1\2""", processed_xhtml)
+
+	if not has_sequential_full_page_figures:
+		has_sequential_full_page_figures = len(dom.xpath("/html/body//figure[re:test(@class, '\\bfull-page\\b') and following-sibling::*[1][name() = 'figure' and re:test(@class, '\\bfull-page\\b')]]")) > 0
+
+	with open(file_path, "w", encoding="utf-8") as file:
+		file.write(processed_xhtml)
+
+	# Since we changed the DOM string using regex, we have to flush its cache entry so we can re-build it later.
+	self.flush_dom(file_path)
+
+	return has_sequential_full_page_figures, endnote_files_to_be_chunked
+
+def _compatibility_replacements_xhtml_mathml_to_presentational(dom: EasyXmlTree) -> EasyXmlTree:
+	"""
+	Convert any "content" MathML to "presentational".
+
+	INPUTS
+	dom: dom of the file being processed.
+
+	OUTPUTS
+	dom: possibly updated dom of the file being processed.
+	"""
+
+	# Check if there's any MathML to convert from "content" to "presentational" type.
+	# We expect MathML to be the "content" type (versus the "presentational" type).
+	# We use an XSL transform to convert from "content" to "presentational" MathML.
+	# If we start with presentational, then nothing will be changed.
+	# Kobo supports presentational MathML. After we build Kobo, we convert the presentational MathML to PNG for the rest of the builds.
+	mathml_transform = None
+	for node in dom.xpath("/html/body//m:math"):
+		mathml_without_namespaces = regex.sub(r"<(/?)m:", r"<\1", node.to_string())
+		mathml_without_namespaces = regex.sub(r"<math", '<math xmlns="http://www.w3.org/1998/Math/MathML\"', mathml_without_namespaces)
+		mathml_content_tree = etree.fromstring(str.encode(f"""<?xml version="1.0" encoding="utf-8"?>{mathml_without_namespaces}"""))
+
+		# Initialize the transform object, if we haven't yet.
+		if not mathml_transform:
+			with importlib.resources.as_file(importlib.resources.files("sach.data").joinpath("mathmlcontent2presentation.xsl")) as mathml_xsl_filename:
+				with open(mathml_xsl_filename, "rb") as file:
+					mathml_transform = etree.XSLT(etree.parse(file))
+
+		# Transform the MathML and get a string representation.
+		# XSLT comes from <https://github.com/fred-wang/webextension-content-mathml-polyfill>.
+		mathml_presentation_tree = mathml_transform(mathml_content_tree)
+		mathml_presentation_xhtml = etree.tostring(mathml_presentation_tree, encoding="unicode", pretty_print=True, with_tail=False).strip()
+
+		# The output adds a new namespace definition to the root `<math>` element. Remove it and re-add the `m:` namespace instead.
+		mathml_presentation_xhtml = regex.sub(r" xmlns=", " xmlns:m=", mathml_presentation_xhtml)
+		mathml_presentation_xhtml = regex.sub(r"<(/)?", r"<\1m:", mathml_presentation_xhtml)
+
+		# Plop our presentational MathML back in to the XHTML we're processing.
+		node.replace_with(etree.fromstring(str.encode(mathml_presentation_xhtml)))
+
+	return dom
+
+def _compatibility_replacements_xhtml_add_aria_roles(dom: EasyXmlTree) -> EasyXmlTree:
+	"""
+	Add ARIA roles alongside existing epub types.
+
+	INPUTS
+	dom: dom of the file being processed.
+
+	OUTPUTS
+	dom: possibly updated dom of the file being processed.
+	"""
+
+	# Add ARIA roles, which are just mostly duplicate attributes to `epub:type`.
+	for role in ARIA_ROLES:
+		# Exclude landmarks because their semantics indicate what their *links* contain, not what *they themselves are*.
+		# Skip elements that already have a `role` attribute, as more than one role will cause Ace to fail.
+		for node in dom.xpath(f"/html//*[not(@role) and not(ancestor-or-self::nav[contains(@epub:type, 'landmarks')]) and re:test(@epub:type, '\\b{role}\\b')]"):
+			# `<article>`s generally aren't allowed ARIA roles, so skip them.
+			if node.tag == "article":
+				continue
+
+			attr_values = regex.split(r"\s", node.get_attr("epub:type"))
+
+			if len(attr_values) > 1:
+				# If there is more than one value for `epub:type`, Ace expects the `role` attribute to be set to the first ARIA-valid `epub:type` value. Iterate over the `epub:type` values and break when we find our first match.
+				for attr_value in attr_values:
+					if attr_value in ARIA_ROLES:
+						node.set_attr("role", f"doc-{attr_value}")
+						break
+			else:
+				node.set_attr("role", f"doc-{attr_values[0]}")
+
+	return dom
+
+def _compatibility_replacements_css(file_path: Path) -> None:
+	"""
+	Make additional CSS replacements needed for compatibility epubs.
+
+	INPUTS
+	self.
+	file_path: Path to the file being processed.
+
+	OUTPUTS
+	None.
+	"""
+
+	with open(file_path, "r+", encoding="utf-8") as file:
+		css = file.read()
+		processed_css = css
+
+		# To get popup footnotes in iBooks, we have to change `epub:endnote` to `epub:footnote`.
+		# Remember to get our custom style selectors too.
+		# `page-break-*` is deprecated in favor of `break-*`. Add `page-break-*` aliases for compatibility in older ereaders.
+		processed_css = regex.sub(r"(\s+)break-(.+?:\s.+?;)", "\\1break-\\2\t\\1page-break-\\2", processed_css)
+
+		# `page-break-*: page;` should be come `page-break-*: always;`.
+		processed_css = regex.sub(r"(\s+)page-break-(before|after):\s+page;", "\\1page-break-\\2: always;", processed_css)
+
+		# Replace `vw` or `vh` units with percent, a reasonable approximation.
+		processed_css = regex.sub(r"^(.+?:\s*[0-9\.]+\s*)(v(w|h));", r"\1%;\n\1\2;", processed_css, flags=regex.MULTILINE)
+
+		if processed_css != css:
+			file.seek(0)
+			file.write(processed_css)
+			file.truncate()
+
+def _split_endnote_files(self: 'SachEpub', work_compatible_epub_dir: Path, endnote_files_to_be_chunked: list[Path], metadata_dom: EasyXmlTree, toc_relative_path: Path, toc_dom: EasyXmlTree) -> None:
+	"""
+	Split endnote files with more than 600 endnotes into multiple files with a max of 500 endnotes each.
+
+	INPUTS
+	self.
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+	toc_relative_path: Path to the table of contents file.
+	toc_dom: dom of the table of contents file.
+
+	OUTPUTS
+	None.
+	"""
+
+	for endnote_file in endnote_files_to_be_chunked:
+		endnote_manifest_href = regex.sub(fr"^{regex.escape(str(work_compatible_epub_dir / 'epub') + os.sep)}", "", str(endnote_file.parent))
+
+		dom = self.get_dom(endnote_file)
+		# Before we continue, update any `a@href` that are only anchors.
+		for node in dom.xpath("/html/body//a[re:test(@href, '^#')]"):
+			node.set_attr("href", f"{endnote_file.name}{node.get_attr('href')}")
+
+		endnotes = dom.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]/ol/li")
+
+		# Split our endnotes into chunks of 500 endnotes each.
+		chunked_endnotes: list[list[EasyXmlElement]] = []
+		for i in range(0, len(endnotes), ENDNOTE_CHUNK_SIZE):
+			chunked_endnotes.append(endnotes[i:i + ENDNOTE_CHUNK_SIZE])
+
+		# We use our endnotes file DOM as a base for the split endnotes. Remove all endnotes and add an empty `<ol>` to start.
+		endnotes_base = deepcopy(dom)
+		endnotes_base.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]/ol")[0].remove()
+		endnotes_base.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]")[0].append(EasyXmlElement("<ol></ol>"))
+		chunk_number = 1
+		endnotes_manifest_entry = metadata_dom.xpath(f"/package/manifest/item[@href='{endnote_manifest_href}/{endnote_file.name}']")[0]
+		endnotes_spine_entry = metadata_dom.xpath(f"/package/spine/itemref[@idref='{endnotes_manifest_entry.get_attr('id')}']")[0]
+		endnotes_toc_entry = toc_dom.xpath(f"/html/body//*[re:test(@epub:type, '\\btoc\\b')]//li[./a[re:test(@href, '^{endnote_manifest_href}/{endnote_file.name}')]]")[0]
+		endnotes_id_map: dict[str, str] = {}
+
+		# Update the landmarks entry right away; we only want to point it to the first endnotes file on the assumption that the rest will be in sequence.
+		endnotes_landmarks_entry = toc_dom.xpath(f"/html/body//*[re:test(@epub:type, '\\blandmarks\\b')]//a[re:test(@href, '^{endnote_manifest_href}/{endnote_file.name}')]")[0]
+		endnotes_landmarks_entry.set_attr("href", f"{endnote_manifest_href}/{endnote_file.stem}-1.xhtml")
+
+		# Chunk the endnotes and write the new endnote files to disk.
+		for chunk in chunked_endnotes:
+			current_endnotes_file = deepcopy(endnotes_base)
+			ol_node = current_endnotes_file.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]/ol")[0]
+			chunk_start = ((chunk_number - 1) * ENDNOTE_CHUNK_SIZE) + 1
+			chunk_end = chunk_start - 1 + len(chunk)
+			new_filename = f"{endnote_file.stem}-{chunk_number}.xhtml"
+
+			if chunk_number > 1:
+				ol_node.set_attr("start", str(chunk_start))
+
+			# Add the endnotes to the new endnotes file.
+			for endnote in chunk:
+				ol_node.append(endnote)
+
+			# Generate and set the new title element of the new endnotes file.
+			endnotes_title = f"Endnotes {format(chunk_start, ',d')}⁠–⁠{format(chunk_end, ',d')}"
+			endnotes_header_node = current_endnotes_file.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]/*[re:test(@epub:type, '\\btitle\\b')]")[0]
+			endnotes_header_node.set_text(endnotes_title)
+			endnotes_title_node = current_endnotes_file.xpath("/html/head/title")[0]
+			endnotes_title_node.set_text(endnotes_title.replace("⁠", ""))
+
+			# Generate our ID map so that we can update links in the ebook later.
+			# We inspect *all* IDs, because we might have an ID that isn't on an endnote.
+			for node in current_endnotes_file.xpath("//*[@id]"):
+				endnotes_id_map[node.get_attr("id")] = new_filename
+
+			# Write the new file.
+			with open(endnote_file.parent / new_filename, "w", encoding="utf-8") as file:
+				file.write(current_endnotes_file.to_string())
+
+			# Update the manifest and spine.
+			endnotes_manifest_entry.lxml_element.addprevious(etree.XML(f"""<item href="{endnote_manifest_href}/{new_filename}" id="{new_filename}" media-type="application/xhtml+xml"/>"""))
+			endnotes_spine_entry.lxml_element.addprevious(etree.XML(f"""<itemref idref="{new_filename}"/>"""))
+
+			# Update the ToC.
+			node_clone = deepcopy(endnotes_toc_entry)
+			node_clone_link = node_clone.xpath(".//a")[0]
+			node_clone_link.set_attr("href", f"{endnote_manifest_href}/{new_filename}")
+			node_clone_link.set_text(endnotes_title.replace("⁠", ""))
+			endnotes_toc_entry.lxml_element.addprevious(node_clone.lxml_element)
+
+			chunk_number = chunk_number + 1
+
+		# Update the metadata file with new manifest/spine.
+		endnotes_manifest_entry.remove()
+		endnotes_spine_entry.remove()
+		endnotes_toc_entry.remove()
+
+		# Remove the old endnotes file.
+		endnote_file.unlink()
+
+		# Iterate over all XHTML files to replace ID refs.
+		for file_path in work_compatible_epub_dir.glob("**/*.xhtml"):
+			dom = self.get_dom(file_path)
+			has_anchor = False
+			for ref in dom.xpath(f"/html/body//a[re:test(@href, '{regex.escape(endnote_file.name)}#')]"):
+				anchor = regex.sub("^.+?#", "", ref.get_attr("href"))
+				ref.set_attr("href", endnotes_id_map[anchor] + "#" + anchor)
+				has_anchor = True
+
+			if has_anchor:
+				with open(file_path, "w", encoding="utf-8") as file:
+					file.write(dom.to_string())
+
+		# Output the modified the ToC file.
+		with open(work_compatible_epub_dir / "epub" / toc_relative_path, "w", encoding="utf-8") as file:
+			file.write(sach.formatting.format_xhtml(toc_dom.to_string()))
+
+def __get_svg_rendered_widths(files_with_svg: list[Path], work_compatible_epub_dir: Path) -> dict[Path, int]:
+	"""
+	Return the *largest* rendered width of each SVG in the ebook, for a known viewport width.
+	"""
+
+	rendered_widths: dict[Path, int] = {}
+
+	# We import this late because we don't want to load selenium if we're not going to use it.
+	from sach.browser import Browser # pylint: disable=import-outside-toplevel
+
+	browser: "Browser|None" = None
+	browser_temp_directory_stack = ExitStack()
+	try:
+		try:
+			browser = Browser()
+		except sach.MissingDependencyException:
+			# If we failed to initialize the browser, don't return any widths, and we'll render SVGs using their native viewbox.
+			sach.print_error("Couldn't start [command]chrome[/], [command]chromium[/], or [command]firefox[/] to calculate SVG widths; falling back to viewbox widths.", False, True)
+			return rendered_widths
+
+		# Set the viewport width.
+		viewport_width = SVG_CANONICAL_VIEWPORT_WIDTH
+		browser.driver.set_window_size(viewport_width, 1000) # pyright: ignore[reportUnknownMemberType] Broken Selenium type hint here.
+
+		# Sometimes, Selenium doesn't set the width correctly. Loop a few times until the viewport width is the actual width we specified.
+		for _ in range(5):
+			inner_width = cast(int, browser.driver.execute_script("return window.innerWidth;")) # pyright: ignore[reportUnknownMemberType] Broken Selenium type hint here.
+			if inner_width == viewport_width:
+				break
+
+			browser.driver.set_window_size(viewport_width + (viewport_width - inner_width), 1000) # pyright: ignore[reportUnknownMemberType] Broken Selenium type hint here.
+
+		# If the browser is sandboxed, we need to copy the work epub into its special temp directory so that it can render the files.
+		browser_epub_directory = work_compatible_epub_dir
+		browser_temporary_directory = browser.get_temporary_directory()
+		if browser_temporary_directory:
+			# The browser is sandboxed, do the copy here.
+			browser_temp_directory_name = browser_temp_directory_stack.enter_context(tempfile.TemporaryDirectory(dir=browser_temporary_directory))
+			browser_epub_directory = Path(browser_temp_directory_name) / work_compatible_epub_dir.name
+			shutil.copytree(work_compatible_epub_dir, browser_epub_directory)
+
+		for file_path in files_with_svg:
+			browser_file_path = browser_epub_directory / file_path.relative_to(work_compatible_epub_dir)
+			browser.driver.get(browser_file_path.resolve().as_uri())
+			measurement_script = """
+				return Array.from(document.querySelectorAll('img[src$=".svg"]')).map((image) => {
+					return {
+						src: image.getAttribute('src'),
+						width: Math.ceil(image.getBoundingClientRect().width)
+					};
+				});
+			"""
+			measurements = cast(list[dict[str, str | int | None]], browser.driver.execute_script(measurement_script)) # pyright: ignore[reportUnknownMemberType] Broken Selenium type hint here.
+
+			for measurement in measurements:
+				src = measurement.get("src")
+				width = measurement.get("width", 0)
+
+				if not isinstance(src, str) or not isinstance(width, int) or width <= 0:
+					continue
+
+				src = urllib.parse.unquote(regex.sub(r"#.*$", "", src))
+				svg_path = (file_path.parent / src).resolve()
+				rendered_widths[svg_path] = max(width, rendered_widths.get(svg_path, 0))
+	finally:
+		try:
+			if browser:
+				browser.driver.quit()
+		except Exception:
+			# We might get here if we `ctrl + c` before Selenium has finished initializing the driver.
+			pass
+
+		browser_temp_directory_stack.close()
+
+	return rendered_widths
+
+def _convert_svgs_to_pngs(self: 'SachEpub', work_compatible_epub_dir: Path, metadata_dom: EasyXmlTree, build_cache_images_directory: Path|None) -> set[Path]:
+	"""
+	Convert SVG illustrations to PNG.
+
+	INPUTS
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+	metadata_dom: dom of the metadata file.
+	build_cache_images_directory: The root directory for build caches.
+
+	OUTPUTS
+	The paths to cache entries matching all images created.
+	"""
+
+	current_cache_paths: set[Path] = set()
+	svg_file_paths = list(work_compatible_epub_dir.glob("**/*.svg"))
+	svg_rendered_widths: dict[Path, int] = {}
+	files_with_svg = list(work_compatible_epub_dir / "epub" / Path(href) for href in metadata_dom.xpath("/package/manifest/item[contains(concat(' ', normalize-space(@properties), ' '), ' svg ') and @media-type='application/xhtml+xml']/@href", str))
+	files_with_measurable_svg = files_with_svg
+	has_convertible_svgs = not self.is_se_ebook or {file_path.name for file_path in svg_file_paths} != {"logo.svg", "titlepage.svg"}
+
+	# If we're an S.E. ebook, we don't want to compute the actual render width of `titlepage.svg` or `logo.svg`; we'll use the `viewbox` width.
+	# So, exclude the files that mention them from width measurement.
+	if self.is_se_ebook:
+		files_with_measurable_svg = [file for file in files_with_svg if file.name not in ("imprint.xhtml", "titlepage.xhtml", "colophon.xhtml")]
+
+	# Only get rendered widths if this is an SE ebook, and we have SVGs in the ebook that are not `titlepage.svg` or `logo.svg`.
+	# `titlepage.svg` will get rendered at its native viewport width; `logo.svg` will be replaced by a prerendered PNG from our data files, instead of rendering live.
+	if svg_file_paths and has_convertible_svgs:
+		svg_rendered_widths = __get_svg_rendered_widths(files_with_measurable_svg, work_compatible_epub_dir)
+
+	# Prep for SVG to PNG conversion. First, remove SVG item properties in the metadata file.
+	for node in metadata_dom.xpath("/package/manifest/item[contains(@properties, 'svg')]"):
+		node.remove_attr_value("properties", "svg")
+
+	# Replace SVGs with PNGs in the manifest.
+	for node in metadata_dom.xpath("/package/manifest/item[@media-type='image/svg+xml']"):
+		node.set_attr("media-type", "image/png")
+
+		for name, value in node.lxml_element.items():
+			node.set_attr(name, regex.sub(r"\.svg$", ".png", value))
+
+		filename_2x = Path(regex.sub(r"\.png$", "-2x.png", node.get_attr("href")))
+		node.lxml_element.addnext(etree.fromstring(f"""<item href="{filename_2x.as_posix()}" id="{filename_2x.stem}-2x.png" media-type="image/png"/>"""))
+
+	# Now convert the SVGs.
+	for file_path in svg_file_paths:
+		output_width = svg_rendered_widths.get(file_path.resolve())
+
+		# Convert SVGs to PNGs at the rendered CSS width when available.
+		# Path arguments must be cast to string.
+		png_path = file_path.parent / (str(file_path.stem) + ".png")
+
+		cache_path = __convert_image(file_path, png_path, 1, build_cache_images_directory, output_width)
+		if cache_path:
+			current_cache_paths.add(cache_path)
+
+		png_path = file_path.parent / (str(file_path.stem) + "-2x.png")
+		cache_path = __convert_image(file_path, png_path, 2, build_cache_images_directory, output_width)
+		if cache_path:
+			current_cache_paths.add(cache_path)
+
+		# Remove the SVG.
+		file_path.unlink()
+
+	# We converted SVGs to PNGs, so replace references.
+	for file_path in files_with_svg:
+		dom = self.get_dom(file_path)
+		has_svg = False
+
+		for node in dom.xpath("/html/body//img[re:test(@src, '\\.svg$')]"):
+			has_svg = True
+			src = node.get_attr("src")
+			node.set_attr("src", src.replace(".svg", ".png"))
+
+			match = regex.search(r".*?(?=\.svg)", src)
+			filename = match[0] if match else None
+			if filename:
+				node.set_attr("srcset", f"{filename}-2x.png 2x, {filename}.png 1x")
+
+		if has_svg:
+			with open(file_path, "w", encoding="utf-8") as file:
+				file.write(dom.to_string())
+
+	return current_cache_paths
+
+def _replace_mathml(self: 'SachEpub', work_compatible_epub_dir: Path, metadata_dom: EasyXmlTree, build_cache_images_directory: Path|None) -> set[Path]:
+	"""
+	Replace MathML with either plain characters or an image of the equation.
+
+	INPUTS
+	self.
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+	metadata_dom: dom of the metadata file.
+	build_cache_images_directory: The images cache directory for this ebook, or `None` to disable the cache.
+
+	OUTPUTS
+	The paths to cache entries for the created images.
+	"""
+
+	# Remove MathML / `describedMath` `accessibilityFeature`s as we’re not going to use MathML.
+	for node in metadata_dom.xpath("/package/metadata/meta[@property='schema:accessibilityFeature' and (text() = 'describedMath' or text() = 'MathML')]"):
+		node.remove()
+
+	current_cache_paths: set[Path] = set()
+	epub_root_directory = work_compatible_epub_dir / "epub"
+
+	# We wrap this whole thing in a `try` block, because we need to quit the browser if execution is interrupted (like by `ctrl + c`, or by an unhandled exception). If we don't quit it, the browser will stay around as a zombie process even if the Python script is dead.
+	browser: 'Browser|None' = None
+	try:
+		mathml_count = 1
+		for metadata_item_node in metadata_dom.xpath("//item[contains(@properties, 'mathml')]"):
+			filename = (Path(work_compatible_epub_dir) / "epub" / metadata_item_node.get_attr("href")).resolve()
+
+			dom = self.get_dom(filename)
+
+			# Iterate over MathML nodes and try to make some basic replacements to achieve the same appearance but without MathML. If we're able to remove all MathML namespaced elements, we don't need to render it as PNG.
+			for node in dom.xpath("/html/body//m:math"):
+				node_clone = deepcopy(node)
+
+				for child in node_clone.xpath("//comment()"):
+					child.remove()
+
+				for child in node_clone.xpath(".//m:msup/*[2]"):
+					replacement_node = EasyXmlElement("<sup/>", {"m": "http://www.w3.org/1998/Math/MathML"})
+
+					if child.parent:
+						child.parent.unwrap()
+
+					mrows = child.xpath(".//m:mrow")
+					for mrow in mrows:
+						mrow.wrap_with(replacement_node)
+						mrow.unwrap()
+
+					if not mrows:
+						child.wrap_with(replacement_node)
+
+				for child in node_clone.xpath(".//m:msub/*[2]"):
+					replacement_node = EasyXmlElement("<sub/>", {"m": "http://www.w3.org/1998/Math/MathML"})
+
+					if child.parent:
+						child.parent.unwrap()
+
+					mrows = child.xpath(".//m:mrow")
+					for mrow in mrows:
+						mrow.wrap_with(replacement_node)
+						mrow.unwrap()
+
+					if not mrows:
+						child.wrap_with(replacement_node)
+
+				for child in node_clone.xpath(".//m:mi[not(./*)]"):
+					replacement_node = EasyXmlElement("<var/>")
+					replacement_node.text = child.text
+					child.replace_with(replacement_node)
+
+				for child in node_clone.xpath(f".//m:mo[re:test(., '^[{sach.INVISIBLE_TIMES}{sach.FUNCTION_APPLICATION}]$')]"):
+					child.remove()
+
+				for child in node_clone.xpath(".//m:mo[re:test(., '^.$')]"):
+					child.text = f"|se:mo|{child.text}|se:mo|"
+					child.unwrap()
+
+				for child in node_clone.xpath(".//m:mn"):
+					child.unwrap()
+
+				for child in node_clone.xpath(".//m:mrow"):
+					child.unwrap()
+
+				# If there are no more MathML-namespaced elements, we succeeded; replace the MathML node with our modified clone.
+				if not node_clone.xpath(".//*[namespace-uri()='http://www.w3.org/1998/Math/MathML']"):
+					# Success!
+					node_clone.lxml_element.tail = ""
+					# Strip white space we may have added in previous operations, and re-add white space around operators.
+					for child in node_clone.lxml_element.iter("*"):
+						if child.text is not None:
+							text = child.text.strip()
+							text = text.replace("|se:mo|", " ")
+							text = regex.sub(r"\s+([\)\]])", r"\1", text)
+							text = regex.sub(r"([\(\[])\s+", r"\1", text)
+							text = regex.sub(r"([0-9])\s+\(", r"\1(", text)
+							child.text = text
+						if child.tail is not None:
+							tail = child.tail.strip()
+							tail = tail.replace("|se:mo|", " ")
+							tail = regex.sub(r"\s+([\)\]])", r"\1", tail)
+							tail = regex.sub(r"([\(\[])\s+", r"\1", tail)
+							tail = regex.sub(r"([0-9])\s+\(", r"\1(", tail)
+
+							if child.tag == "var":
+								tail = regex.sub(r"\s+([\(\[])", r"\1", tail)
+
+							child.tail = tail
+
+					# Remove leading spaces from the root.
+					if node_clone.lxml_element.text is not None:
+						node_clone.lxml_element.text = node_clone.lxml_element.text.lstrip()
+
+					# Remove trailing spaces from the tail of the last element.
+					for child in node_clone.xpath("./*[last()]"):
+						if child.lxml_element.tail is not None:
+							child.lxml_element.tail = child.lxml_element.tail.rstrip()
+
+					# If the node has no children, strip its text value.
+					if not node_clone.children:
+						node_clone.lxml_element.text = (node_clone.lxml_element.text or "").strip()
+
+					node.replace_with(node_clone)
+					node_clone.unwrap()
+				else:
+					# Failure! Abandon all hope, and use Selenium to convert the MathML to PNG.
+					# First, remove the `m:` namespace shorthand and add the actual namespace to our fragment.
+					namespaced_line = regex.sub(r"<(/?)m:", "<\\1", node.to_string())
+					namespaced_line = namespaced_line.replace("<math", "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"")
+
+					# Have Selenium render the fragment if it isn't already cached.
+					output_path = epub_root_directory / "images" / f"mathml-{mathml_count}.png"
+					output_path_2x = epub_root_directory / "images" / f"mathml-{mathml_count}-2x.png"
+					cache_paths, browser = __convert_mathml_to_png(namespaced_line, output_path, output_path_2x, build_cache_images_directory, browser)
+					current_cache_paths.update(cache_paths)
+
+					img_node = EasyXmlElement("<img/>", {"epub": "http://www.idpf.org/2007/ops"})
+					img_node.set_attr("class", "mathml epub-type-se-image-color-depth-black-on-transparent")
+					img_node.set_attr("epub:type", "se:image.color-depth.black-on-transparent")
+					img_node.set_attr("src", f"../images/mathml-{mathml_count}-2x.png")
+					img_node.set_attr("srcset", f"../images/mathml-{mathml_count}-2x.png 2x, ../images/mathml-{mathml_count}.png 1x")
+
+					if node.get_attr("alttext"):
+						img_node.set_attr("alt", node.get_attr("alttext"))
+
+					# Get the 1x dimensions and set the `height`/`width` attributes in case a renderer doesn't supporte `srcset`.
+					image_file = Image.open(output_path)
+					img_width = image_file.size[0]
+					img_height = image_file.size[1]
+
+					img_node.set_attr("width", str(img_width))
+					img_node.set_attr("height", str(img_height))
+
+					# Add any new MathML images we generated to the manifest.
+					for metadata_manifest_node in metadata_dom.xpath("/package/manifest"):
+						metadata_manifest_node.append(etree.fromstring(f"""<item href="images/mathml-{mathml_count}.png" id="mathml-{mathml_count}.png" media-type="image/png"/>"""))
+						metadata_manifest_node.append(etree.fromstring(f"""<item href="images/mathml-{mathml_count}-2x.png" id="mathml-{mathml_count}-2x.png" media-type="image/png"/>"""))
+
+					node.replace_with(img_node)
+
+					mathml_count = mathml_count + 1
+
+			# Do we still have MathML in this file? If not, remove the namespace and also the `mathml` property from the metadata file.
+			if not dom.xpath("/html/body//*[namespace-uri()='http://www.w3.org/1998/Math/MathML']"):
+				# Remove unused namespaces, e.g. `mathml`.
+				etree.cleanup_namespaces(dom.etree)
+
+				# Update the metadata file to remove the `mathml` property.
+				metadata_item_node.remove_attr_value("properties", "mathml")
+
+			with open(filename, "w", encoding="utf-8") as file:
+				file.write(dom.to_string())
+
+	except KeyboardInterrupt as ex:
+		# Bubble the exception up, but proceed to `finally` so we quit the browser.
+		raise ex
+	finally:
+		try:
+			if browser:
+				browser.driver.quit()
+		except Exception:
+			# We might get here if we `ctrl + c` before Selenium has finished initializing the driver.
+			pass
+
+	return current_cache_paths
+
+def _compatibility_css_additional_replacements(work_compatible_epub_dir: Path) -> None:
+	"""
+	Make additional CSS replacements.
+
+	INPUTS
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+
+	OUTPUTS
+	None.
+	"""
+
+	for file_path in work_compatible_epub_dir.glob("**/*.css"):
+		with open(file_path, "r+", encoding="utf-8") as file:
+			css = file.read()
+			processed_css = css
+
+			processed_css = regex.sub(r"^\s*hyphens\s*:\s*(.+)", "\thyphens: \\1\n\tadobe-hyphenate: \\1\n\t-webkit-hyphens: \\1\n\t-moz-hyphens: \\1", processed_css, flags=regex.MULTILINE)
+			processed_css = regex.sub(r"^\s*hyphens\s*:\s*none;", "\thyphens: none;\n\tadobe-text-layout: optimizeSpeed; /* For Nook */", processed_css, flags=regex.MULTILINE)
+
+			# We converted SVGs to PNGs, so replace references.
+			processed_css = regex.sub(r"""url\("(.*?)\.svg"\)""", r"""url("\1.png")""", processed_css)
+
+			if processed_css != css:
+				file.seek(0)
+				file.write(processed_css)
+				file.truncate()
+
+def _build_kobo(self: 'SachEpub', work_dir: Path, work_compatible_epub_dir: Path, output_dir: Path, kobo_output_filename: str, last_updated: datetime | None) -> None:
+	"""
+	Build the Kobo .kepub file.
+
+	INPUTS
+	work_dir: Path to the temporary working directory.
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+	output_dir: Path to the output directory where epub files are to be created.
+	kobo_output_filename: Name of the Kobo output file.
+	metadata_dom: dom of the metadata file.
+	last_updated: timestamp of the last commit date.
+
+	OUTPUTS
+	None.
+	"""
+
+	work_kepub_dir = Path(work_dir / (work_compatible_epub_dir.name + ".kepub"))
+	shutil.copytree(work_compatible_epub_dir, str(work_kepub_dir), dirs_exist_ok=True)
+	work_kepub = SachEpub(work_kepub_dir)
+
+	with open(work_kepub_dir / "epub" / "css" / "sach.css", "a", encoding="utf-8") as css_file:
+		with importlib.resources.files("sach.data.templates").joinpath("sach-kobo.css").open("r", encoding="utf-8") as compatibility_css_file:
+			css_file.write("\n\n" + compatibility_css_file.read())
+
+	with open(work_kepub_dir / "epub" / "css" / "core.css", "a", encoding="utf-8") as css_file:
+		with importlib.resources.files("sach.data.templates").joinpath("kobo.css").open("r", encoding="utf-8") as compatibility_css_file:
+			css_file.write("\n\n" + compatibility_css_file.read())
+
+	# Kobos don't support `break-*` CSS, so attempt to single-file collections into multiple files to create a page break effect.
+	work_kepub.split_collection_files()
+
+	for file_path in work_kepub_dir.glob("**/*"):
+		# Add a note to the metadata file indicating this is a transform build.
+		if file_path.name == self.metadata_file_path.name:
+			dom = work_kepub.get_dom(file_path)
+			dom = _add_metadata(dom, self.last_commit, "kobo")
+
+			with open(file_path, "w", encoding="utf-8") as file:
+				file.write(dom.to_string())
+
+		if file_path.suffix == ".xhtml":
+			_build_kobo_process_xhtml(work_kepub, file_path)
+
+		if file_path.suffix == ".css":
+			_build_kobo_process_css(file_path)
+
+	# All done, clean the output.
+	# Note that we don't clean `.xhtml` files, because the way Kobo `<span>`s are added means that it will screw up spaces inbetween endnotes.
+	for file_path in work_kepub_dir.glob("**/*.opf"):
+		sach.formatting.format_xml_file(file_path)
+
+	sach.epub.write_epub(work_kepub_dir, output_dir / kobo_output_filename, last_updated)
+
+# Kobo `.kepub` files need each clause wrapped in a special `<span>` element to enable highlighting.
+# Do this here. Hopefully Kobo will get their act together soon and drop this requirement.
+def _build_kobo_process_xhtml(work_kepub: 'SachEpub', file_path: Path) -> None:
+	"""
+	Support function for _build_kobo: Make changes to XHTML files needed for .kepub output.
+
+	INPUTS
+	work_kepub: SachEpub class of the in-progress Kobo epub.
+	file_path: Path to the file being processed.
+
+	OUTPUTS
+	None.
+	"""
+
+	kobo.paragraph_counter = 1
+	kobo.segment_counter = 1
+
+	# Note: Kobo supports CSS hyphenation, but it can be improved with soft hyphens.
+	# However we can't insert them, because soft hyphens break the dictionary search when a word is highlighted.
+	dom = work_kepub.get_dom(file_path)
+
+	# Don't add spans to the ToC.
+	if dom.xpath("/html/body//nav[contains(@epub:type, 'toc')]"):
+		return
+
+	# First, add child `<span>`s to each `<a>` element, allowing us to set the correct bottom border color for dark mode.
+	# Kobo forces a black bottom border on each `<a>` that we can't override, but it doesn't change the border to white in dark mode!
+	# This makes links undiscernable from regular text, without this fix.
+	for node in dom.xpath("//a"):
+		tag_string = node.to_tag_string().replace("<a ", "<a xmlns:epub=\"http://www.idpf.org/2007/ops\" ") + "</a>"
+
+		# Wrap the contents of the `<a>` by replacing the `<a>` with a `<span>`, then recreating the `<a>` around it.
+		link_node = EasyXmlElement(tag_string)
+		link_node.tail = node.lxml_element.tail or ""
+		node.lxml_element.tail = ""
+		node.lxml_element.tag = "span"
+
+		# Remove all attributes.
+		for name, _ in sorted(node.lxml_element.items()):
+			node.remove_attr(name)
+
+		node.set_attr("class", "kobo-link")
+		node.wrap_with(link_node)
+
+	# # Remove `quote-align` `<span>`s we inserted above, since Kobo has weird spacing problems with them.
+	# for node in dom.xpath("/html/body//span[contains(@class, 'quote-align')]"):
+	# 	node.unwrap()
+
+	# In the kepub format we must add special `<span>`s for Kobo to read. However these `<span>`s:
+	# 1. Interact badly with CSS selectors like `span` or `span > span`.
+	# 2. If not nested correctly will slow Kobo to a crawl, see <https://groups.google.com/g/standardebooks/c/Mrfu6nbWMpM/m/KaTW1RpgCAAJ>.
+	# To work around this, we simply rename any existing `<span>`s in our epub to `<se-span>`. This is still a valid element in HTML, is easy to replace in CSS selectors, and doesn't conflict with Kobo `<span>`s.
+	for node in dom.xpath("//span"):
+		node.lxml_element.tag = "se-span"
+
+	# Change `noteref` to `endnote` so that popup endnotes work in Kobo. Kobo doesn't understand `noteref`, only `endnote`.
+	for node in dom.xpath("/html/body//a[contains(@epub:type, 'noteref')]"):
+		node.set_attr("epub:type", node.get_attr("epub:type") + " endnote")
+
+	# Now add the Kobo `<span>`s.
+	kobo.add_kobo_spans_to_node(dom.xpath("/html/body")[0].lxml_element)
+
+	# `<time>` without a `@datetime` attribute cannot contain child elements, so remove Kobo `<span>`s in that case.
+	# The xpath uses `local-name()` instead of directly selecting `<span>` because the `add_kobo_spans_to_node()` function adds its `<span>`s with the `html` namespace (i.e. added `<span>`s are `html:span`), and `EasyXml` can't cope with new namespaces after the object has already been instantiated.
+	for node in dom.xpath("/html/body//time[not(@datetime)]//*[local-name() = 'span' and @class='koboSpan']"):
+		node.unwrap()
+
+	# Kobos don't have fonts that support the `↩` character in endnotes, so replace it with `←`.
+	if dom.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]"):
+		# We use xpath to select the Kobo `<span>`s that we just inserted.
+		for node in dom.xpath("/html/body//a[contains(@epub:type, 'backlink')]//*[not(./*) and text() = '\u21a9\ufe0e']"):
+			node.set_text("←")
+
+	xhtml = dom.to_string()
+
+	# Kobos replace no-break hyphens with a weird high hyphen character, so replace that here.
+	xhtml = xhtml.replace("‑", f"{sach.WORD_JOINER}-{sach.WORD_JOINER}")
+
+	# Remove namespaces from the output that were added by `kobo.add_kobo_spans_to_node()`.
+	xhtml = xhtml.replace(" xmlns:html=\"http://www.w3.org/1999/xhtml\"", "")
+	xhtml = regex.sub(r"<(/?)html:span", r"<\1span", xhtml)
+
+	# Currently, our house soft-hyphenation is better than Kobo's built-in hyphenation.
+	# But, we can't hyphenate because Kobo doesn't remove soft hyphens when looking up dictionary words. Therefore any user dictionary lookup will result in "can't find entry."
+	# xhtml = sach.typography.hyphenate(xhtml, None, True)
+
+	with open(file_path, "w", encoding="utf-8") as file:
+		file.write(xhtml)
+
+def _build_kobo_process_css(file_path: Path) -> None:
+	"""
+	Support function for _build_kobo: Make changes to CSS files needed for .kepub output.
+
+	INPUTS
+	file_path: Path to the file being processed.
+
+	OUTPUTS
+	None.
+	"""
+
+	with open(file_path, "r+", encoding="utf-8") as file:
+		css = file.read()
+		processed_css = css
+
+		# Retarget `span` selectors at SE `<span>`s (i.e. not `koboSpan`s) only.
+		processed_css = regex.sub(r"""(?<=\s)span(?=.*[,{]\n)""", r"""se-span""", processed_css)
+
+		if processed_css != css:
+			file.seek(0)
+			file.write(processed_css)
+			file.truncate()
+
+def _generate_ncx(self: 'SachEpub', work_compatible_epub_dir: Path, metadata_dom: EasyXmlTree) -> str:
+	"""
+	Generate an toc.ncx file from the ToC for older readers.
+
+	INPUTS
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+	metadata_dom: dom of the metadata file.
+
+	OUTPUTS
+	toc_filename: The name of the table of contents file.
+	"""
+
+	# First find the ToC file.
+	try:
+		toc_filename = metadata_dom.xpath("//item[@properties=\"nav\"][1]/@href", str)[0]
+	except IndexError as ex:
+		raise sach.InvalidSachEbookException("Couldn’t determine ToC filename.") from ex
+
+	for node in metadata_dom.xpath("/package/spine"):
+		node.set_attr("toc", "ncx")
+
+	for node in metadata_dom.xpath("/package/manifest"):
+		node.append(etree.fromstring("""<item href="toc.ncx" id="ncx" media-type="application/x-dtbncx+xml"/>"""))
+
+	# As of 2026 iBooks uses the `<landmarks>` element to determine where to start a new ebook at, instead of looking at the spine.
+	# It only recognizes certain values of `epub:type` in `<landmarks>`; see <https://help.apple.com/itc/booksassetguide/en.lproj/itc0f175a5b9.html>.
+	# However, it only allows *one value* for `epub:type` in `<landmarks>`, and if there is more than one value, the entry is skipped.
+	# So, insert an entry for the "start" of the book in `<landmarks>` here.
+	try:
+		# Don't use `self.spine_file_paths` because those are the *absolute* paths, and we want the *relative* paths.n
+		first_spine_href = metadata_dom.xpath("/package/manifest/item[@id = /package/spine/itemref[1]/@idref]/@href", str)[0]
+	except IndexError as ex:
+		raise sach.InvalidSachEbookException("Couldn’t determine the first spine item.") from ex
+
+	toc_path = work_compatible_epub_dir / "epub" / toc_filename
+	toc_dom = self.get_dom(toc_path)
+	try:
+		toc_dom.xpath("//nav[re:test(@epub:type, '\\blandmarks\\b')]/ol")[0].prepend(EasyXmlElement(f"""<li xmlns:epub="http://www.idpf.org/2007/ops"><a href="{first_spine_href}" epub:type="frontmatter">Frontmatter</a></li>"""))
+	except Exception:
+		# No valid `<landmarks>`, pass.
+		pass
+
+	with open(toc_path, "w", encoding="utf-8") as file:
+		file.write(sach.formatting.format_xhtml(toc_dom.to_string()))
+
+	# Now use an XSL transform to generate the NCX.
+	with importlib.resources.as_file(importlib.resources.files("sach.data").joinpath("navdoc2ncx.xsl")) as navdoc2ncx_xsl_filename:
+		toc_tree = sach.epub.convert_toc_to_ncx(work_compatible_epub_dir, toc_filename, navdoc2ncx_xsl_filename)
+
+	# Convert the `<nav>` landmarks element to the `<guide>` element in the metadata file, and add a reference element for the titlepage to it.
+	# Here we need to work around a Kindle issue present as of August 2024: if there is not at least one reference element in the guide whose href links to body, front or back matter, current chapter locations on Kindle become frozen to an incorrect value (for SE books, the current chapter is shown as "Titlepage" no matter which chapter is open).
+	# Note: The `text` type attribute usually sets where the ebook opens on Kindle, but in its absence, the book will open at the titlepage even when the `type` attribute of the titlepage reference element is not `text` but `title-page`.
+	# Given this, and the fact that we currently want books to open at the titlepage, we do not need to add a reference element to the guide whose `type` attribute is `text`.
+	# SE books will also open on Kindle at the titlepage if there is neither a reference element whose `type` attribute is`text`, nor one whose `type` attribute is `titlepage`.
+	guide_root_node = EasyXmlElement("<guide/>")
+	# In an earlier version of tools the titlepage was in the landmarks, but it is no longer, so use union in xpath to get its node from the ToC.
+	for node in toc_tree.xpath("//nav[@epub:type=\"toc\"]/ol/li[1]/a | //nav[@epub:type=\"landmarks\"]/ol/li/a"):
+		ref_node = EasyXmlElement("<reference/>")
+		ref_node.set_attr("title", node.text)
+		ref_node.set_attr("href", node.get_attr("href"))
+
+		# Set the `type` attribute for the titlepage reference element, using the `title` attribute to identify the titlepage `<a>` element from the ToC, because it has no `epub:type`.
+		if ref_node.get_attr("title") == "Titlepage":
+			ref_node.set_attr("type", "title-page")
+
+		if node.get_attr("epub:type"):
+			# Set the `type` attribute and remove any `z3998` items, as well as front/body/backmatter.
+			# Removing bodymatter is OK because, as above, we're appending a titlepage reference element to the guide, so we do not also need one whose type attribute is `text`. If we include both a titlepage reference element whose type attribute is `title-page` and a bodymatter reference element whose `type` attribute is `text`, ebooks will open on Kindle at the relevant bodymatter `href`, not at the titlepage.
+			ref_node.set_attr("type", node.get_attr("epub:type"))
+			ref_node.set_attr("type", regex.sub(r"\s*\b(front|body|back)matter\b\s*", "", ref_node.get_attr("type")))
+			ref_node.set_attr("type", regex.sub(r"\s*\bz3998:.+\b\s*", "", ref_node.get_attr("type")))
+
+		if ref_node.get_attr("type"):
+			# Remove `epub:type`s that are not in the allow list, see <http://idpf.org/epub/20/spec/OPF_2.0.1_draft.htm#Section2.6>.
+			new_node_types: list[str] = []
+
+			attr = ref_node.get_attr("type")
+
+			for node_type in attr.split():
+				# Include only types from the allow list that might possibly appear as landmark `epub:types`, plus `title-page` as we've manually set above.
+				if node_type in ("acknowledgements", "bibliography", "glossary", "index", "loi", "lot", "title-page"):
+					new_node_types.append(node_type)
+				# Manually set type for endnotes files.
+				elif node_type == "endnotes":
+					new_node_types.append("notes")
+				# Earlier in this file the endnote file `epub:type` was modified to include `footnotes`; ignore `footnotes` as we've just handled `endnotes`, and catch any remaining types.
+				elif node_type != "footnotes":
+					new_node_types.append(f"other.{node_type}")
+
+			ref_node.set_attr("type", " ".join(new_node_types))
+
+			guide_root_node.append(ref_node)
+
+	# Append the guide to the `<package>` element.
+	if guide_root_node.children:
+		for node in metadata_dom.xpath("/package"):
+			node.append(guide_root_node)
+
+	# Add an ONIX record based on our transformed metadata.
+	for node in metadata_dom.xpath("/package/metadata/dc:title[1]"):
+		node.insert_before(EasyXmlElement("""<link href="onix.xml" media-type="application/xml" properties="onix" rel="record"/>"""))
+
+	onix_dom = self.generate_onix(metadata_dom)
+	with open(work_compatible_epub_dir / "epub" / "onix.xml", "w", encoding="utf-8") as file:
+		file.write(sach.formatting.format_xml(onix_dom.to_string()))
+
+	# Guide is done, now write the metadata file and clean it.
+	# Output the modified metadata file before making more compatibility hacks.
+	with open(work_compatible_epub_dir / "epub" / self.metadata_file_path.name, "w", encoding="utf-8") as file:
+		# Nook has a bug where the cover image `<meta>` element *must* have attributes in a certain order.
+		# See:
+		# - <https://nachtimwald.com/2011/08/21/nook-covers-not-showing-up/>
+		# - <https://github.com/standardebooks/tools/issues/577>
+		# Change the order with a regex before writing out the file.
+		xml = sach.formatting.format_opf(metadata_dom.to_string())
+		xml = regex.sub(r"""<meta content="([^"]+?)" name="cover"/>""", r"""<meta name="cover" content="\1"/>""", xml)
+		file.write(xml)
+
+	# All done, clean the output.
+	for filepath in sach.get_target_filenames([work_compatible_epub_dir], (".xhtml", ".ncx")):
+		try:
+			sach.formatting.format_xml_file(filepath)
+		except sach.SachException as ex:
+			raise sach.InvalidXhtmlException(f"{ex}. File: [path][link={filepath}]{filepath}[/][/]") from ex
+
+	return toc_filename
+
+def _run_epubcheck(self: 'SachEpub', work_compatible_epub_dir: Path) -> None:
+	"""
+	Run epubcheck and the Nu XHTML5 validator on the compatibility epub.
+
+	INPUTS
+	self.
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+
+	OUTPUTS
+	None.
+	"""
+
+	build_messages: list[BuildMessage] = []
+
+	# Path arguments must be cast to string for Windows compatibility.
+	with importlib.resources.as_file(importlib.resources.files("sach.data.epubcheck").joinpath("epubcheck.jar")) as jar_path:
+		# We have to use a temp file to hold `stdout`, because if the output is too large for the output buffer in `subprocess.run()` (and thus `popen()`) it will be truncated.
+		with tempfile.TemporaryFile() as stdout:
+			# We can't check the return code, because if only warnings are returned then epubcheck will return `0` (success).
+			# Force encoding for Windows compatibility.
+			subprocess.run(["java", "-Dfile.encoding=UTF-8", "-Dsun.jnu.encoding=UTF-8", "-jar", str(jar_path), "--quiet", "--out", "-", "--mode", "exp", str(work_compatible_epub_dir)], stdout=stdout, stderr=subprocess.DEVNULL, check=False)
+
+			stdout.seek(0)
+			# Sometimes Java on Windows encodes output using the system code page anyway, so force UTF8 again.
+			output = stdout.read().decode("utf-8", errors="replace").strip()
+
+			epubcheck_dom = EasyXmlTree(output)
+
+			messages = epubcheck_dom.xpath("/jhove/repInfo/messages/message")
+
+			if messages:
+				# Save the epub output so the user can inspect it.
+				epub_debug_dir = __save_debug_epub(work_compatible_epub_dir)
+
+				# Replace instances of the temp epub path with our permanent epub path.
+				# Note that epubcheck always appends `.epub` to the dir name.
+				output = output.replace(str(work_compatible_epub_dir) + ".epub", str(epub_debug_dir))
+
+				for message in messages:
+					error_text = regex.search(r"(\[(.+)\]), ", message.text) or []
+					file_text = regex.search(r"\], (.+?) \(([0-9]+)-([0-9]+)\)$", message.text) or []
+
+					if file_text:
+						file_path = epub_debug_dir / file_text[1]
+						build_messages.append(BuildMessage("epubcheck", message.get_attr("id"), error_text[2], file_path, int(file_text[2]), int(file_text[3])))
+					else:
+						build_messages.append(BuildMessage("epubcheck", message.get_attr("id"), error_text[2]))
+
+				raise sach.BuildFailedException("[command]epubcheck[/] failed.", build_messages)
+
+	# Now run the Nu Validator.
+	with importlib.resources.as_file(importlib.resources.files("sach.data.vnu").joinpath("vnu.jar")) as jar_path:
+		# We have to use a temp file to hold stdout, because if the output is too large for the output buffer in `subprocess.run()` (and thus `popen()`) it will be truncated.
+		with tempfile.TemporaryFile() as stdout:
+			# Force encoding for Windows compatibility.
+			subprocess.run(["java", "-Dfile.encoding=UTF-8", "-Dsun.jnu.encoding=UTF-8", "-jar", str(jar_path), "--format", "xml", "--skip-non-html", str(self.content_path)], stdout=stdout, stderr=stdout, check=False)
+
+			stdout.seek(0)
+			# Sometimes Java on Windows encodes output using the system code page anyway, so force UTF8 again.
+			vnu_dom = EasyXmlTree(stdout.read().decode("utf-8", errors="replace").strip())
+
+			# The Nu Validator will return errors for epub-specific attributes (like `epub:prefix` and `epub:type`) because they're not defined in the XHTML5 spec. So, we simply filter out those errors.
+			# Also filter out:
+			# - `section lacks heading` messages, because they are warnings and we may have sections without headings (like dedications, frontispieces).
+			# - Warnings about potentially bad values for datetimes, which are raised for years < 1000. This can occur in works like _Omega_ by Camille Flammarion.
+			# - Errors about `<p>` being a child of `<hgroup>`. The spec changed but our current VNU version has not caught up.
+			# - `Year may be mistyped.` errors, because they are warnings about incorrect years, which may be correct for far-future sci fi (like `AD <time>4000</time>`).
+			messages = vnu_dom.xpath("/messages/*[not(re:test(./message, '^(Attribute (prefix|type) not allowed|(Section|Article) lacks heading\\.|Potentially bad value.+datetime|Element p not allowed as child of element hgroup in this context\\.|Double-check the text content of element.+Year may be mistyped\\.)'))]")
+
+			for message in messages:
+				message_text = message.xpath("./message")[0].inner_xml()
+				submessage = None
+
+				# Colorize output.
+				message_text = regex.sub(r"([Aa]ttribute) <code>", r"\1 [attr]", message_text)
+				message_text = regex.sub(r"([Ee]lement) <code>(.+?)</code>", r"\1 [xhtml]<\2>[/]", message_text)
+				message_text = message_text.replace("<code>", "[xhtml]")
+				message_text = message_text.replace("</code>", "[/]")
+				message_text = unescape(message_text)
+
+				# Do we have a submessage?
+				extract = message.xpath("./extract")
+
+				if extract:
+					# The extract will contain the offending line plus some lines around it.
+					# The offending line is marked up with `<m>` so pull it out and discard the surrounding lines.
+					target = extract[0].xpath("./m")
+					if target:
+						submessage = target[0].inner_xml()
+					else:
+						submessage = extract[0].inner_xml()
+
+					submessage = unescape(submessage).strip()
+					submessage = [submessage]
+
+				file_path = Path(regex.sub(r"^file:", "", message.get_attr("url")))
+				build_messages.append(BuildMessage("vnu", "", message_text, file_path, int(message.get_attr("last-line")), int(message.get_attr("first-column")), submessage))
+
+			if messages:
+				raise sach.BuildFailedException("[command]vnu[/] failed.", build_messages)
+
+def _run_ace(self: 'SachEpub', work_compatible_epub_dir: Path) -> None:
+	"""
+	Run the Ace validator on the compatibility epub.
+
+	INPUTS
+	self.
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+
+	OUTPUTS
+	None.
+	"""
+
+	build_messages: list[BuildMessage] = []
+
+	# We have to use a temp file to hold `stdout`, because if the output is too large for the output buffer in `subprocess.run()` (and thus `popen()`) it will be truncated.
+	with tempfile.TemporaryFile() as stdout:
+		try:
+			ace_result = subprocess.run(["ace", "--silent", str(work_compatible_epub_dir)], stdout=stdout, stderr=subprocess.DEVNULL, check=False)
+			ace_result.check_returncode()
+
+			stdout.seek(0)
+			ace_dom = json.loads(stdout.read().decode().strip())
+			output = ""
+
+			# If Ace failed, print Ace output to the console in a nice way.
+			if ace_dom["earl:result"]["earl:outcome"] != "pass":
+				# Save the epub output so the user can inspect it.
+				epub_debug_dir = __save_debug_epub(work_compatible_epub_dir)
+
+				# Ace outputs a flat list of errors, so here we try to arrange them so that each combination of `(file, error)` has a list of errors below it, instead of repeating the filename and code over and over.
+				# A dict whose keys are a tuple of `(filename, code)` and whose values are an array of `(message, html)`.
+				file_messages: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
+
+				for assertion in ace_dom["assertions"]:
+					if assertion["earl:result"]["earl:outcome"] != "pass":
+						file = epub_debug_dir / self.content_path.name / assertion["earl:testSubject"]["url"]
+
+						for file_assertion in assertion["assertions"]:
+							if file_assertion["earl:result"]["earl:outcome"] != "pass":
+								emit_result = True
+
+								# Ace fails a test if the language tag is a private-use subtag, like `lang="x-alien"`.
+								# Don't include those false positives in the results.
+								# See <https://github.com/daisy/ace/issues/169>.
+								if file_assertion["earl:test"]["dct:title"] == "valid-lang" and "lang=\"x-" in file_assertion["earl:result"]["html"]:
+									emit_result = False
+
+								# Ace fails if an `<article>` doesn't have a `role` that matches its `epub:type`; but `epubcheck` will complain if the `role` is not allowed on that element. This mostly affects `<article>`s.
+								# We choose to satisfy `epubcheck` first by not including `role` on `<article>`, then ignoring Ace's complaint.
+								# See:
+								# - <https://github.com/daisy/ace/issues/354>
+								# - <https://standardebooks.org/ebooks/robert-frost/north-of-boston>
+								if file_assertion["earl:test"]["dct:title"] == "epub-type-has-matching-role" and "<article" in file_assertion["earl:result"]["html"]:
+									emit_result = False
+
+								if emit_result:
+									code = file_assertion["earl:test"]["dct:title"]
+									file_messages[(str(file), code)].append((file_assertion["earl:result"]["dct:description"], file_assertion["earl:result"]["html"] if "html" in file_assertion["earl:result"].keys() else ""))
+
+				# Unpack our sorted messages for output.
+				for (file_path_str, code), message_list in file_messages.items():
+					item_messages: list[str] = []
+					for (_, html) in message_list:
+						if html:
+							# Ace output includes namespaces on each element, remove them.
+							html = regex.sub(r" xmlns(?::.*?)?=\"[^\"]+?\"", "", html)
+							item_messages.append(html)
+
+					# `message_list[0][n]` will always be the same so `[0][0]` suffices.
+					build_messages.append(BuildMessage("ace", code, message_list[0][0], Path(file_path_str), None, None, item_messages))
+
+				if build_messages:
+					raise sach.BuildFailedException("[command]ace[/] failed.", build_messages)
+
+				# We had to copy the epub dir to a temp dir so that we could get the real file paths for Ace messages.
+				# But if we got here, then Ace had no real messages to emit, so we have to clean up the temp dir we created.
+				shutil.rmtree(epub_debug_dir, ignore_errors=True)
+
+				if output:
+					raise sach.BuildFailedException(f"[command]ace[/] failed:\n\n{output.strip()}")
+
+		except subprocess.CalledProcessError as ex:
+			raise sach.BuildFailedException("[command]ace[/] failed.") from ex
+
+def _build_kindle(self: 'SachEpub', work_dir: Path, work_compatible_epub_dir: Path, output_dir: Path, kindle_output_filename: str, toc_filename: str, metadata_dom: EasyXmlTree, compatible_epub_output_filename: str, asin: str, last_updated: datetime | None) -> None:
+	"""
+	Build the Kindle .azw3 file.
+
+	INPUTS
+	work_dir: Path to the temporary working directory.
+	work_compatible_epub_dir: Path to the compatibility epub file in the temporary working directory.
+	output_dir: Path to the output directory where epub files are to be created.
+	kindle_output_filename: Name of the Kindle output file.
+	toc_filename: Name of the table of contents file.
+	metadata_dom: dom of the metadata file.
+	compatible_epub_output_filename: Name of the compatible epub file.
+	asin: The calculated asin of the compatibility epub.
+	last_updated: timestamp of the last commit date.
+
+	OUTPUTS
+	None.
+	"""
+
+	# Calibre conversion removes this anyway, so don't add it to begin with.
+	# metadata_dom = _add_metadata(metadata_dom, self.last_commit, "azw3")
+
+	# Kindle doesn't go more than 2 levels deep for ToC, so flatten it here.
+	with open(work_compatible_epub_dir / "epub" / toc_filename, "rb+") as file:
+		dom = EasyXmlTree(file.read())
+
+		for node in dom.xpath("//ol/li/ol/li/ol"):
+			parent = node.lxml_element.getparent()
+			if parent is not None:
+				parent.addnext(node.lxml_element)
+				node.unwrap()
+
+		file.seek(0)
+		file.write(dom.to_string().encode("utf-8"))
+		file.truncate()
+
+	# Rebuild the NCX.
+	with importlib.resources.as_file(importlib.resources.files("sach.data").joinpath("navdoc2ncx.xsl")) as navdoc2ncx_xsl_filename:
+		sach.epub.convert_toc_to_ncx(work_compatible_epub_dir, toc_filename, navdoc2ncx_xsl_filename)
+
+	# Clean just the ToC and NCX.
+	for filepath in [work_compatible_epub_dir / "epub" / "toc.ncx", work_compatible_epub_dir / "epub" / toc_filename]:
+		sach.formatting.format_xml_file(filepath)
+
+	# Do some compatibility replacements.
+	for file_path in work_compatible_epub_dir.glob("**/*.xhtml"):
+		dom = self.get_dom(file_path)
+		replace_shy_hyphens = False
+
+		# Remove `se:image.color-depth.black-on-transparent`, as Calibre removes media queries so this will *always* be invisible.
+		for node in dom.xpath("/html/body//img[contains(@class, 'epub-type-se-image-color-depth-black-on-transparent') or contains(@epub:type, 'se:image.color-depth.black-on-transparent')]"):
+			if node.get_attr("class"):
+				node.set_attr("class", node.get_attr("class").replace("epub-type-se-image-color-depth-black-on-transparent", "").replace("epub-type-se-image-style-realistic", ""))
+
+			if node.get_attr("epub:type"):
+				node.set_attr("epub:type", node.get_attr("epub:type").replace("se:image.color-depth.black-on-transparent", "").replace("se:image.style.realistic", ""))
+
+		# If the only element on the page is an absolutely positioned image, Kindle will ignore the file in the reading order.
+		# So, in that case we add a `<div>` with some text content to fool Kindle.
+		# However, Calibre will remove `font-size: 0` so we have to use `overflow` to hide the `<div>`.
+		if dom.xpath("/html/body/*[(name() = 'section' or name() = 'article') and not(contains(@epub:type, 'titlepage'))]/*[(name() = 'figure' or name() = 'img') and not(preceding-sibling::node()[normalize-space(.)] or following-sibling::node()[normalize-space(.)])]"):
+			for node in dom.xpath("/html/body"):
+				node.prepend(etree.fromstring("""<div style="height: 0; width: 0; overflow: hidden; line-height: 0; font-size: 0;">x</div>"""))
+
+		# If this is the endnotes file, convert endnotes to Kindle popup compatible notes.
+		# To do this, we move the backlink to the front of the endnote's first `<p>` (or we create a first `<p>` if there isn't one) and change its text to the note number instead of a back arrow.
+		# Then, we remove all endnote `<li>` wrappers and put their IDs on the first `<p>` child, leaving just a series of `<p>`s.
+		if dom.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]"):
+			# While Kindle now supports soft hyphens, popup endnotes break words but don't insert the hyphen characters. So for now, remove soft hyphens from the endnotes file.
+			replace_shy_hyphens = True
+
+			# Loop over each endnote and move the ending backlink to the front of the endnote for Kindles.
+			note_container = dom.xpath("/html/body//section[re:test(@epub:type, '\\bendnotes\\b')]/ol")[0]
+
+			note_number = 1
+
+			if note_container.get_attr("start"):
+				note_number = int(note_container.get_attr("start"))
+
+			for endnote in note_container.xpath("./li"):
+				first_p = endnote.xpath("(./p[not(preceding-sibling::*)])[1]")
+
+				# Sometimes there is no leading `<p>` element (for example, if the endnote starts with a blockquote.
+				# If that's the case, just insert one in front.
+				if first_p:
+					first_p = first_p[0]
+				else:
+					first_p = EasyXmlElement("<p/>")
+					endnote.prepend(first_p)
+
+				first_p.set_attr("id", endnote.get_attr("id"))
+
+				for node in endnote.xpath(".//a[contains(@epub:type, 'backlink')]"):
+					node.set_text(str(note_number))
+					node.lxml_element.tail = ". "
+					first_p.prepend(node)
+
+				# Sometimes backlinks were in their own `<p>` element, which is now empty. Remove those.
+				for node in endnote.xpath(".//p[not(normalize-space(.))]"):
+					node.remove()
+
+				# Now remove the wrapping li node from the note.
+				endnote.unwrap()
+
+				note_number = note_number + 1
+
+			# Remove the containing `<ol>`, since the children are just `<p>`s now.
+			note_container.unwrap()
+
+		# Remove the `epub:type` attribute, as Calibre turns it into just `type`.
+		for node in dom.xpath("//*[@epub:type]"):
+			node.remove_attr("epub:type")
+
+		# Kindle doesn't recognize most zero-width spaces or word joiners, so just remove them.
+		# It does recognize the word joiner character, but only in the old mobi7 format. The new format renders them as spaces.
+		xhtml = dom.to_string().replace(sach.ZERO_WIDTH_SPACE, "")
+
+		if replace_shy_hyphens:
+			xhtml = xhtml.replace(sach.SHY_HYPHEN, "")
+
+		# Add soft hyphens, but not to the ToC.
+		if not dom.xpath("/html[re:test(@epub:prefix, '[\\s\\b]se:[\\s\\b]')]/body/nav[contains(@epub:type, 'toc')]"):
+			xhtml = sach.typography.hyphenate(xhtml, None, True)
+
+		with open(file_path, "w", encoding="utf-8") as file:
+			file.write(sach.formatting.format_xhtml(xhtml))
+
+	# Include compatibility CSS.
+	with open(work_compatible_epub_dir / "epub" / "css" / "core.css", "a", encoding="utf-8") as core_css_file:
+		with importlib.resources.files("sach.data.templates").joinpath("kindle.css").open("r", encoding="utf-8") as compatibility_css_file:
+			core_css_file.write("\n\n" + compatibility_css_file.read())
+
+	# Build an epub file we can send to Calibre.
+	sach.epub.write_epub(work_compatible_epub_dir, work_dir / compatible_epub_output_filename, last_updated)
+
+	# Generate the Kindle file.
+	cover_path = None
+	for href in metadata_dom.xpath("//item[@properties=\"cover-image\"]/@href", str):
+		cover_path = work_compatible_epub_dir / "epub" / href
+
+	try:
+		convert_epub_to_azw3(work_dir / compatible_epub_output_filename, output_dir / kindle_output_filename, cover_path, asin)
+	except Exception as ex:
+		raise sach.BuildFailedException(f"AZW3 conversion failed:\n{ex}") from ex
+
+	# Success, extract the Kindle cover thumbnail.
+
+	# Extract the thumbnail.
+	if os.path.isfile(work_compatible_epub_dir / "epub" / "images" / "cover.jpg"):
+		kindle_cover_thumbnail_file = Image.open(work_compatible_epub_dir / "epub" / "images" / "cover.jpg")
+		kindle_cover_thumbnail_image = kindle_cover_thumbnail_file.convert("RGB") # Remove alpha channel from PNG if necessary.
+		kindle_cover_thumbnail_image = kindle_cover_thumbnail_image.resize((432, 648)) # type: ignore This is an error in Pillow's type stub.
+		kindle_cover_thumbnail_image.save(output_dir / f"thumbnail_{asin}_EBOK_portrait.jpg")
+
+def build(self: 'SachEpub', run_epubcheck: bool, check_only: bool, build_kobo: bool, build_kindle: bool, output_dir: Path, proof: bool, build_cache_directory: Path|None) -> None:
+	"""
+	Entry point for `se build`.
+	"""
+
+	if check_only:
+		run_epubcheck = True
+		build_kobo = False
+		build_kindle = False
+
+	# Check for some required tools.
+	run_ace = False
+	if run_epubcheck:
+		java_present = True
+		if not shutil.which("java"):
+			java_present = False
+		# Mac Big Sur+ has a "dummy" `/usr/bin/java`; test `-version` to see if Java is really installed.
+		elif sys.platform == "darwin":
+			try:
+				java_check = subprocess.run(["java", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=False)
+				if java_check.stderr.decode().find("Unable to locate") >= 0:
+					java_present = False
+			except Exception:
+				java_present = False
+
+		if not java_present:
+			raise sach.MissingDependencyException("Couldn’t locate [command]java[/]. Is it installed?")
+
+		if shutil.which("ace"):
+			run_ace = True
+
+	# Check the output directory and create it if it doesn't exist.
+	try:
+		output_dir = output_dir.resolve()
+		output_dir.mkdir(parents=True, exist_ok=True)
+	except Exception as ex:
+		raise sach.FileExistsException(f"Couldn’t create output directory: [path][link=file://{output_dir}]{output_dir}[/][/].") from ex
+
+	# Set up our cache.
+	build_cache_images_directory = None
+	if build_cache_directory:
+		build_cache_images_directory = build_cache_directory / "images"
+
+		try:
+			build_cache_images_directory.mkdir(parents=True, exist_ok=True)
+		except Exception:
+			build_cache_directory = None
+			build_cache_images_directory = None
+
+	# All clear to start building!
+
+	# Make a copy of the metadata DOM because we'll be making changes.
+	metadata_dom = deepcopy(self.metadata_dom)
+
+	# Initiate the various filenames we'll be using for output.
+	# By convention the ASIN is set to the SHA-1 sum of the book's identifying URL.
+	try:
+		identifier = metadata_dom.xpath("//dc:identifier")[0].inner_xml()
+		if identifier == "":
+			identifier = self.generate_identifier()
+
+		asin = sha1(identifier.encode("utf-8")).hexdigest()
+
+		identifier = identifier.replace("https://standardebooks.org/ebooks/", "")
+		pieces = identifier.split("/")
+		safe_pieces = [sach.formatting.make_url_safe(piece) for piece in pieces]
+		identifier = "_".join(safe_pieces)
+	except Exception as ex:
+		raise sach.InvalidSachEbookException(f"Missing [xml]<dc:identifier>[/] element in [path][link=file://{self.metadata_file_path}]{self.metadata_file_path}[/][/].") from ex
+
+	if not metadata_dom.xpath("//dc:title"):
+		raise sach.InvalidSachEbookException(f"Missing [xml]<dc:title>[/] element in [path][link=file://{self.metadata_file_path}]{self.metadata_file_path}[/][/].")
+
+	compatible_epub_output_filename = f"{identifier}{'.proof' if proof else ''}.epub"
+	advanced_epub_output_filename = f"{identifier}{'.proof' if proof else ''}_advanced.epub"
+	kobo_output_filename = f"{identifier}{'.proof' if proof else ''}.kepub.epub"
+	kindle_output_filename = f"{identifier}{'.proof' if proof else ''}.azw3"
+	endnote_files_to_be_chunked: list[Path] = []
+	has_sequential_full_page_figures = False
+
+	# Create our temp work directory.
+	with tempfile.TemporaryDirectory() as temp_dir:
+		work_dir = Path(temp_dir)
+		work_compatible_epub_dir: Path = work_dir / self.path.name
+
+		shutil.copytree(self.epub_root_path, str(work_compatible_epub_dir), dirs_exist_ok=True)
+
+		shutil.rmtree(work_compatible_epub_dir / ".git", ignore_errors=True)
+
+		# We may have a `.gitignore` file in the epub root if this is a white-label epub. If so, remove it before continuing.
+		(work_compatible_epub_dir / ".gitignore").unlink(True)
+
+		# Clean up old output files if any.
+		(output_dir / f"thumbnail_{asin}_EBOK_portrait.jpg").unlink(True)
+		(output_dir / compatible_epub_output_filename).unlink(True)
+		(output_dir / advanced_epub_output_filename).unlink(True)
+		(output_dir / kobo_output_filename).unlink(True)
+		(output_dir / kindle_output_filename).unlink(True)
+
+		# Are we including proofreading CSS?
+		if proof:
+			_add_proof_css(work_compatible_epub_dir)
+
+		# Update the release date in the metadata and colophon.
+		last_updated = _update_release_date(self, work_compatible_epub_dir, metadata_dom)
+
+		_add_metadata(metadata_dom, self.last_commit, "epub")
+
+		# Output the pure epub file.
+		if not check_only:
+			with open(work_compatible_epub_dir / "epub" / self.metadata_file_path.name, "w", encoding="utf-8") as file:
+				file.write(sach.formatting.format_opf(metadata_dom.to_string()))
+
+			sach.epub.write_epub(work_compatible_epub_dir, output_dir / advanced_epub_output_filename, last_updated)
+
+		# Now add compatibility fixes for older ereaders.
+
+		current_cache_paths: set[Path] = set()
+
+		# Replace MathML with either plain characters or an image of the equation.
+		# Do this before simplifying CSS because this may add new `epub:type`s.
+		if metadata_dom.xpath("/package/manifest/*[contains(@properties, 'mathml')]"):
+			current_cache_paths.update(_replace_mathml(self, work_compatible_epub_dir, metadata_dom, build_cache_images_directory))
+
+		# Add compatibility and simplify CSS.
+		_add_compatibility_css_and_simplify(self, work_compatible_epub_dir)
+
+		# Convert cover to JPG if it's not already.
+		current_cache_paths.update(_convert_cover_to_jpg(work_compatible_epub_dir, metadata_dom, build_cache_images_directory))
+
+		# Loop over files to make some compatibility replacements.
+		for file_path in work_compatible_epub_dir.glob("**/*"):
+			if file_path.suffix == ".svg":
+				_compatibility_replacements_svg(self, file_path)
+
+			if file_path.suffix == ".xhtml":
+				has_sequential_full_page_figures, endnote_files_to_be_chunked = _compatibility_replacements_xhtml(self, file_path, has_sequential_full_page_figures, endnote_files_to_be_chunked)
+
+			if file_path.suffix == ".css":
+				_compatibility_replacements_css(file_path)
+
+		# If we have sequential `<figure class="full-page">` elements, add compatibility CSS to avoid a blank page being inserted between them.
+		# See <https://groups.google.com/g/standardebooks/c/L8rm-ImUY_Q>.
+		if has_sequential_full_page_figures:
+			with open(work_compatible_epub_dir / "epub" / "css" / "core.css", "a", encoding="utf-8") as css_file:
+				with importlib.resources.files("sach.data.templates").joinpath("full-page-figure-compatibility.css").open("r", encoding="utf-8") as compatibility_css_file:
+					css_file.write("\n\n" + compatibility_css_file.read())
+
+		# Get the ToC dom for upcoming operations.
+		try:
+			toc_relative_filename = metadata_dom.xpath("/package/manifest/item[re:test(@properties, '\\bnav\\b')]/@href", str)[0]
+		except IndexError as ex:
+			raise sach.InvalidSachEbookException("Couldn’t determine ToC filename") from ex
+
+		toc_relative_path = Path(toc_relative_filename)
+
+		toc_dom = self.get_dom(work_compatible_epub_dir / "epub" / toc_relative_path)
+
+		# If we have any endnote files with more than 600 endnotes, split them.
+		if endnote_files_to_be_chunked:
+			_split_endnote_files(self, work_compatible_epub_dir, endnote_files_to_be_chunked, metadata_dom, toc_relative_path, toc_dom)
+
+		# Remove `<span>` and `<abbr>` from the ToC, which causes broken rendering in iOS 18+. See <https://groups.google.com/g/standardebooks/c/dam7dmBcqW0/m/v4GaBkY7AgAJ>.
+		write_toc = False
+		for node in toc_dom.xpath("/html/body//abbr | /html/body//span"):
+			node.unwrap()
+			write_toc = True
+
+		if write_toc:
+			with open(work_compatible_epub_dir / "epub" / toc_relative_path, "w", encoding="utf-8") as file:
+				file.write(sach.formatting.format_xhtml(toc_dom.to_string()))
+
+		# Output the modified the metadata file so that we can build the Kobo book before making more compatibility hacks that aren’t needed on that platform.
+		with open(work_compatible_epub_dir / "epub" / self.metadata_file_path.name, "w", encoding="utf-8") as file:
+			file.write(sach.formatting.format_opf(metadata_dom.to_string()))
+
+		if build_kobo and not check_only:
+			_build_kobo(self, work_dir, work_compatible_epub_dir, output_dir, kobo_output_filename, last_updated)
+
+		# Now work on more compatibility fixes.
+		current_cache_paths.update(_convert_svgs_to_pngs(self, work_compatible_epub_dir, metadata_dom, build_cache_images_directory))
+
+		# Recurse over CSS files to make some compatibility replacements.
+		_compatibility_css_additional_replacements(work_compatible_epub_dir)
+
+		# Include cover metadata for older ereaders.
+		for cover_id in metadata_dom.xpath("//item[@properties=\"cover-image\"]/@id", str):
+			for node in metadata_dom.xpath("/package/metadata"):
+				node.append(etree.fromstring(f"""<meta content="{cover_id}" name="cover"/>"""))
+
+		# Add metadata to the metadata file indicating this file is a Vietnamese ebook compatibility build.
+		metadata_dom = _add_metadata(metadata_dom, self.last_commit, "epub/compatible")
+
+		# Generate our NCX file for compatibility with older ereaders.
+		toc_filename = _generate_ncx(self, work_compatible_epub_dir, metadata_dom)
+
+		# Write the compatible epub.
+		if not check_only:
+			sach.epub.write_epub(work_compatible_epub_dir, output_dir / compatible_epub_output_filename, last_updated)
+
+		# Run checks, if specified.
+		if run_epubcheck:
+			_run_epubcheck(self, work_compatible_epub_dir)
+
+			# Now run Ace.
+			if run_ace:
+				_run_ace(self, work_compatible_epub_dir)
+
+		# Prune unused images from the cache.
+		if build_cache_images_directory:
+			try:
+				for cache_path in build_cache_images_directory.glob("*"):
+					if cache_path.is_file() and cache_path not in current_cache_paths:
+						cache_path.unlink()
+			except Exception:
+				pass
+
+		# If we're only checking, quit now.
+		if check_only:
+			return
+
+		if build_kindle:
+			_build_kindle(self, work_dir, work_compatible_epub_dir, output_dir, kindle_output_filename, toc_filename, metadata_dom, compatible_epub_output_filename, asin, last_updated)
+
+	# Build is all done!
+	# Since we made heavy changes to the ebook's DOM, flush the DOM cache in case we use this class again.
+	self._dom_cache = [] # type: ignore # pylint: disable=protected-access
+	self._file_cache = [] # type: ignore # pylint: disable=protected-access

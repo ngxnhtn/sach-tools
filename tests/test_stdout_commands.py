@@ -74,13 +74,13 @@ def test_stdout_commands(draftbook__directory: Path, work__directory: Path, comm
 
 	# these commands don't have any input files and thus don't need/use the book directory
 	if command in no_ebook_directory_commands:
-		must_run(f"se {command_to_use}")
+		must_run(f"sach {command_to_use}")
 	else:
 		# contains the files specific to the particular test being run
 		in_directory = test_directory / "in"
 		# contains the full ebook structure, with the in_directory files copied over the draft ebook files
 		book_directory = assemble_draftbook(draftbook__directory, in_directory, work__directory)
-		must_run(f"se {command_to_use} {book_directory}")
+		must_run(f"sach {command_to_use} {book_directory}")
 
 	# Output of stderr should always be empty
 	out, err = capfd.readouterr()

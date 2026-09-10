@@ -1,0 +1,182 @@
+"""
+This module implements the `se lint` command.
+"""
+
+import argparse
+import os
+from pathlib import Path
+
+import regex
+from rich import box
+from rich.align import Align
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+
+import sach
+from sach.sach_help_formatter import SachHelpFormatter
+from sach.sach_epub import SachEpub
+
+def _highlight_markup(text: str) -> Text:
+	"""Apply syntax highlighting to explicitly tagged XML, XHTML, HTML, and CSS fragments."""
+	text_object = Text.from_markup(text)
+
+	for span in text_object.spans.copy():
+		if span.style in {"xml", "xhtml", "css", "css-selector"}:
+			text_object.spans.remove(span)
+			if span.style == "css":
+				highlighted_text = sach.highlight_css(text_object.plain[span.start:span.end])
+			elif span.style == "css-selector":
+				highlighted_text = sach.highlight_css_selector(text_object.plain[span.start:span.end])
+			else:
+				highlighted_text = sach.highlight_xml(text_object.plain[span.start:span.end])
+			for highlighted_span in highlighted_text.spans:
+				text_object.stylize(highlighted_span.style, span.start + highlighted_span.start, span.start + highlighted_span.end)
+
+	return text_object
+
+def lint(plain_output: bool) -> int:
+	"""
+	Entry point for `se lint`.
+	"""
+
+	parser = argparse.ArgumentParser(description="Check for various Vietnamese ebook style errors.", prog="[command]sach[/] [subcommand]lint[/]", formatter_class=SachHelpFormatter)
+	lint_ignore_group = parser.add_mutually_exclusive_group()
+	lint_ignore_group.add_argument("-a", "--allow", dest="allowed_messages", nargs="+", help="If an [path]se-lint-ignore.xml[/] file is present, allow these specific codes to be raised by lint.")
+	lint_ignore_group.add_argument("-s", "--skip-lint-ignore", action="store_true", help="Ignore all rules in the [path]se-lint-ignore.xml[/] file.")
+	parser.add_argument("-v", "--verbose", action="store_true", help="Increase output verbosity.")
+	parser.add_argument("directories", metavar="[path]DIRECTORY[/]", nargs="+", help="A Vietnamese ebook source directory.")
+	args = parser.parse_args()
+
+	called_from_parallel = sach.is_called_from_parallel(False)
+	force_terminal = sach.should_output_color() # `True` will force colors, `False` will disable colors.
+	first_output = True
+	return_code = 0
+
+	# Rich needs to know the terminal width in order to format tables.
+	# If we're called from Parallel, there is no width because Parallel is not a terminal. Thus we must export `$COLUMNS` before invoking Parallel, and then get that value here.
+	console = Console(width=int(os.environ["COLUMNS"]) if called_from_parallel and "COLUMNS" in os.environ else None, highlight=False, theme=sach.RICH_THEME, force_terminal=force_terminal) # Syntax highlighting will do weird things when printing paths; `force_terminal` prints colors when called from GNU Parallel or when `--color` is used.
+
+	for directory in args.directories:
+		directory = Path(directory).resolve()
+		messages = []
+		exception = None
+		table_data: list[list[str|Align|Text]] = []
+		has_output = False
+
+		try:
+			sach_epub = SachEpub(directory)
+			messages = sach_epub.lint(args.skip_lint_ignore, args.allowed_messages)
+		except sach.SachException as ex:
+			exception = ex
+			if len(args.directories) > 1:
+				return_code = sach.LintFailedException.code
+			else:
+				return_code = ex.code
+
+		# Print a separator newline if more than one table is printed.
+		if not first_output and (args.verbose or messages or exception):
+			console.print("")
+		elif first_output:
+			first_output = False
+
+		# Print the table header.
+		if ((len(args.directories) > 1 or called_from_parallel) and (messages or exception)) or args.verbose:
+			has_output = True
+			if plain_output:
+				console.print(directory)
+			else:
+				console.print(f"[reverse][path][link=file://{directory}]{directory}[/][/][/reverse]")
+
+		if exception:
+			has_output = True
+			sach.print_error(exception, plain_output=plain_output)
+
+		# Print the tables.
+		if messages:
+			has_output = True
+			return_code = sach.LintFailedException.code
+
+			if plain_output:
+				for message in messages:
+					label = "[Manual Review]"
+
+					if message.message_type == sach.MESSAGE_TYPE_ERROR:
+						label = "[Error]"
+
+					# Replace color markup with ```.
+					message.text = sach.prep_output(message.text, True)
+
+					message_filename = ""
+					if message.filename:
+						message_filename = message.filename.name
+
+					console.print(f"{message.code} {label} {message_filename} {message.text}")
+
+					if message.submessages:
+						for submessage in message.submessages:
+							# Indent each line in case we have a multi-line submessage.
+							text = regex.sub(r"^", "\t", sach.prep_output(submessage.text, True), flags=regex.MULTILINE)
+							if submessage.line_num:
+								text = f" Line {submessage.line_num}:{text}"
+							console.print(text)
+			else:
+				for message in messages:
+					alert = "[bright_yellow]Manual Review[/bright_yellow]"
+
+					if message.message_type == sach.MESSAGE_TYPE_ERROR:
+						alert = "[bright_red]Error[/bright_red]"
+
+					# Add hyperlinks around message filenames.
+					message_filename = ""
+					if message.filename:
+						message_filename = f"[path][link=file://{message.filename.resolve()}]{message.filename.name}[/link][/path]"
+
+					message_object = _highlight_markup(message.text)
+
+					table_data.append([message.code, alert, message_filename, message_object])
+
+					if message.submessages:
+						for submessage in message.submessages:
+							if "[hint]" in submessage.text or "[css]" in submessage.text or "[css-property]" in submessage.text or "[css-selector]" in submessage.text:
+								submessage_object = _highlight_markup(submessage.text)
+							else:
+								# Syntax highlight any XML or XHTML nodes in submessages.
+								submessage_object = sach.highlight_xml(submessage.text)
+
+							# Make submessages dim while retaining any syntax highlighting.
+							submessage_object.stylize_before("dim")
+
+							if submessage.line_num and message.filename:
+								line_number = sach.format_line_number(submessage.line_num, submessage.column_num)
+								submessage_line = Align(f"[link=file://{message.filename.resolve()}{line_number}]Line {submessage.line_num}[/link]", align="right")
+							else:
+								submessage_line = Align("→", align="right")
+
+							table_data.append([" ", " ", submessage_line, submessage_object])
+
+				table = Table(show_header=True, header_style="bold", show_lines=True, expand=True)
+				table.add_column("Code", width=5, no_wrap=True)
+				table.add_column("Severity", no_wrap=True)
+				table.add_column("File", max_width=25, no_wrap=True)
+				table.add_column("Message", ratio=10)
+
+				for row in table_data:
+					table.add_row(row[0], row[1], row[2], row[3])
+
+				console.print(table)
+
+		if args.verbose and not messages and not exception:
+			if plain_output:
+				console.print("OK")
+			else:
+				table = Table(show_header=False, box=box.SQUARE)
+				table.add_column("", style="white on green4 bold")
+				table.add_row("OK")
+				console.print(table)
+
+		# Print a newline if we're called from parallel and we just printed something, to better visually separate output blocks.
+		if called_from_parallel and has_output:
+			console.print("")
+
+	return return_code

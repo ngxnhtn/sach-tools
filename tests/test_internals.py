@@ -14,13 +14,14 @@ from pytest import MonkeyPatch
 import regex
 from selenium.webdriver.remote.webdriver import WebDriver
 
-import se.se_epub_build
-from se.browser import Browser
-from se.se_epub_build import __convert_image, __convert_mathml_to_png
-from se.se_epub_generate_toc import add_landmark, TocItem
-import se.easy_xml
-import se.images
-from se.se_epub_lint import SourceFile
+import sach
+import sach.sach_epub_build
+from sach.browser import Browser
+from sach.sach_epub_build import __convert_image, __convert_mathml_to_png
+from sach.sach_epub_generate_toc import add_landmark, TocItem
+import sach.easy_xml
+import sach.images
+from sach.sach_epub_lint import SourceFile
 
 
 XML_COMMENT_PATTERN = regex.compile(r"<!--.+?-->", flags=regex.DOTALL)
@@ -29,7 +30,7 @@ def test_add_landmark_empty_title():
 	"""
 	Verify we can find a landmark title when title element is present but empty.
 	"""
-	dom = se.easy_xml.EasyXmlTree('<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/, se: https://standardebooks.org/vocab/1.0" xml:lang="en-US"><head><title></title></head><body><section epub:type="foo"><h1></h1></section></body></html>')
+	dom = sach.easy_xml.EasyXmlTree('<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/, se: https://standardebooks.org/vocab/1.0" xml:lang="en-US"><head><title></title></head><body><section epub:type="foo"><h1></h1></section></body></html>')
 	landmarks: list[TocItem] = []
 	add_landmark(dom, "file", landmarks)
 
@@ -39,7 +40,7 @@ def test_add_landmark_no_title():
 	"""
 	Verify we can find a landmark title when title element is not present.
 	"""
-	dom = se.easy_xml.EasyXmlTree('<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/, se: https://standardebooks.org/vocab/1.0" xml:lang="en-US"><body><section epub:type="foo"><h1></h1></section></body></html>')
+	dom = sach.easy_xml.EasyXmlTree('<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/, se: https://standardebooks.org/vocab/1.0" xml:lang="en-US"><body><section epub:type="foo"><h1></h1></section></body></html>')
 	landmarks: list[TocItem] = []
 	add_landmark(dom, "file", landmarks)
 
@@ -49,7 +50,7 @@ def test_add_landmark_with_title():
 	"""
 	Verify we can find a landmark title when title element is present.
 	"""
-	dom = se.easy_xml.EasyXmlTree('<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/, se: https://standardebooks.org/vocab/1.0" xml:lang="en-US"><head><title>Bar</title></head><body><section epub:type="foo"><h1></h1></section></body></html>')
+	dom = sach.easy_xml.EasyXmlTree('<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/, se: https://standardebooks.org/vocab/1.0" xml:lang="en-US"><head><title>Bar</title></head><body><section epub:type="foo"><h1></h1></section></body></html>')
 	landmarks: list[TocItem] = []
 	add_landmark(dom, "file", landmarks)
 
@@ -61,7 +62,7 @@ def test_inner_text():
 	element, retains interior whitespace, excludes all tags and attributes, and
 	returns both named and numeric entities as their corresponding characters.
 	"""
-	dom = se.easy_xml.EasyXmlTree('<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en-US"><body><p epub:type="foo"> a <i>&lt;</i>b <span epub:type="bar">\t&#913; </span>c<br/>\nd </p>e</body></html>')
+	dom = sach.easy_xml.EasyXmlTree('<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en-US"><body><p epub:type="foo"> a <i>&lt;</i>b <span epub:type="bar">\t&#913; </span>c<br/>\nd </p>e</body></html>')
 	p = next(iter(dom.xpath("//p")))
 
 	assert p.inner_text() == "a <b \tΑ c\nd"
@@ -82,7 +83,7 @@ def test_optimize_png(tmp_path: Path):
 		original_image.load()
 		original_pixels = original_image.convert("RGBA").tobytes()
 
-	se.images.optimize_png(image_path)
+	sach.images.optimize_png(image_path)
 
 	with Image.open(image_path) as optimized_image:
 		optimized_image.load()
@@ -95,87 +96,87 @@ def test_optimize_png(tmp_path: Path):
 
 def test_cache_directory_uses_xdg_cache_home(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
-	Verify the Standard Ebooks cache directory honors XDG_CACHE_HOME on any platform.
+	Verify the Vietnamese ebook cache directory honors XDG_CACHE_HOME on any platform.
 	"""
 
 	monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
 
-	assert se.get_cache_directory() == tmp_path / "se"
+	assert sach.get_cache_directory() == tmp_path / "sach"
 
 def test_cache_directory_uses_localappdata_on_windows(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
-	Verify the Standard Ebooks cache directory honors LOCALAPPDATA on Windows when XDG_CACHE_HOME is unset.
+	Verify the Vietnamese ebook cache directory honors LOCALAPPDATA on Windows when XDG_CACHE_HOME is unset.
 	"""
 
 	monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
 	monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-	monkeypatch.setattr(se.sys, "platform", "win32")
+	monkeypatch.setattr(sach.sys, "platform", "win32")
 
-	assert se.get_cache_directory() == tmp_path / "se"
+	assert sach.get_cache_directory() == tmp_path / "sach"
 
 def test_cache_directory_uses_dot_cache_on_non_windows(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
-	Verify the Standard Ebooks cache directory defaults to ~/.cache/se on non-Windows platforms.
+	Verify the Vietnamese ebook cache directory defaults to ~/.cache/se on non-Windows platforms.
 	"""
 
 	monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
-	monkeypatch.setattr(se.sys, "platform", "linux")
-	monkeypatch.setattr(se.Path, "home", lambda: tmp_path)
+	monkeypatch.setattr(sach.sys, "platform", "linux")
+	monkeypatch.setattr(sach.Path, "home", lambda: tmp_path)
 
-	assert se.get_cache_directory() == tmp_path / ".cache" / "se"
+	assert sach.get_cache_directory() == tmp_path / ".cache" / "sach"
 
 def test_cache_directory_uses_library_caches_on_macos(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
-	Verify the Standard Ebooks cache directory defaults to ~/Library/Caches/se on macOS.
+	Verify the Vietnamese ebook cache directory defaults to ~/Library/Caches/se on macOS.
 	"""
 
 	monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
-	monkeypatch.setattr(se.sys, "platform", "darwin")
-	monkeypatch.setattr(se.Path, "home", lambda: tmp_path)
+	monkeypatch.setattr(sach.sys, "platform", "darwin")
+	monkeypatch.setattr(sach.Path, "home", lambda: tmp_path)
 
-	assert se.get_cache_directory() == tmp_path / "Library" / "Caches" / "se"
+	assert sach.get_cache_directory() == tmp_path / "Library" / "Caches" / "sach"
 
 def test_config_directory_uses_xdg_config_home(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
-	Verify the Standard Ebooks config directory honors XDG_CONFIG_HOME on any platform.
+	Verify the Vietnamese ebook config directory honors XDG_CONFIG_HOME on any platform.
 	"""
 
 	monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
-	assert se.get_config_directory() == tmp_path / "se"
+	assert sach.get_config_directory() == tmp_path / "sach"
 
 def test_config_directory_uses_appdata_on_windows(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
-	Verify the Standard Ebooks config directory honors APPDATA on Windows when XDG_CONFIG_HOME is unset.
+	Verify the Vietnamese ebook config directory honors APPDATA on Windows when XDG_CONFIG_HOME is unset.
 	"""
 
 	monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
 	monkeypatch.setenv("APPDATA", str(tmp_path))
-	monkeypatch.setattr(se.sys, "platform", "win32")
+	monkeypatch.setattr(sach.sys, "platform", "win32")
 
-	assert se.get_config_directory() == tmp_path / "se"
+	assert sach.get_config_directory() == tmp_path / "sach"
 
 def test_config_directory_uses_dot_config_on_non_windows(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
-	Verify the Standard Ebooks config directory defaults to ~/.config/se on non-Windows platforms.
+	Verify the Vietnamese ebook config directory defaults to ~/.config/se on non-Windows platforms.
 	"""
 
 	monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-	monkeypatch.setattr(se.sys, "platform", "linux")
-	monkeypatch.setattr(se.Path, "home", lambda: tmp_path)
+	monkeypatch.setattr(sach.sys, "platform", "linux")
+	monkeypatch.setattr(sach.Path, "home", lambda: tmp_path)
 
-	assert se.get_config_directory() == tmp_path / ".config" / "se"
+	assert sach.get_config_directory() == tmp_path / ".config" / "sach"
 
 def test_config_directory_uses_library_application_support_on_macos(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
-	Verify the Standard Ebooks config directory defaults to ~/Library/Application Support/se on macOS.
+	Verify the Vietnamese ebook config directory defaults to ~/Library/Application Support/se on macOS.
 	"""
 
 	monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-	monkeypatch.setattr(se.sys, "platform", "darwin")
-	monkeypatch.setattr(se.Path, "home", lambda: tmp_path)
+	monkeypatch.setattr(sach.sys, "platform", "darwin")
+	monkeypatch.setattr(sach.Path, "home", lambda: tmp_path)
 
-	assert se.get_config_directory() == tmp_path / "Library" / "Application Support" / "se"
+	assert sach.get_config_directory() == tmp_path / "Library" / "Application Support" / "sach"
 
 def test_config_value_uses_default_when_file_does_not_exist(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
@@ -183,10 +184,10 @@ def test_config_value_uses_default_when_file_does_not_exist(monkeypatch: MonkeyP
 	"""
 
 	config_directory = tmp_path / "config"
-	monkeypatch.setattr(se, "get_config_directory", lambda: config_directory)
-	se._get_config_dom.cache_clear()
+	monkeypatch.setattr(sach, "get_config_directory", lambda: config_directory)
+	sach._get_config_dom.cache_clear()
 
-	assert se.get_config_value("/configuration/build/@max-cache-size") == "50MB"
+	assert sach.get_config_value("/configuration/build/@max-cache-size") == "50MB"
 	assert not config_directory.exists()
 
 def test_config_value_uses_configuration_file(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
@@ -201,10 +202,10 @@ def test_config_value_uses_configuration_file(monkeypatch: MonkeyPatch, tmp_path
 	<build max-cache-size="100MB"/>
 </configuration>
 	""", encoding="utf-8")
-	monkeypatch.setattr(se, "get_config_directory", lambda: config_directory)
-	se._get_config_dom.cache_clear()
+	monkeypatch.setattr(sach, "get_config_directory", lambda: config_directory)
+	sach._get_config_dom.cache_clear()
 
-	assert se.get_config_value("/configuration/build/@max-cache-size") == "100MB"
+	assert sach.get_config_value("/configuration/build/@max-cache-size") == "100MB"
 
 def test_config_value_caches_configuration_dom(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
@@ -219,10 +220,10 @@ def test_config_value_caches_configuration_dom(monkeypatch: MonkeyPatch, tmp_pat
 	<build max-cache-size="100MB"/>
 </configuration>
 	""", encoding="utf-8")
-	monkeypatch.setattr(se, "get_config_directory", lambda: config_directory)
-	se._get_config_dom.cache_clear()
+	monkeypatch.setattr(sach, "get_config_directory", lambda: config_directory)
+	sach._get_config_dom.cache_clear()
 
-	assert se.get_config_value("/configuration/build/@max-cache-size") == "100MB"
+	assert sach.get_config_value("/configuration/build/@max-cache-size") == "100MB"
 
 	config_file_path.write_text("""<?xml version="1.0" encoding="utf-8"?>
 <configuration>
@@ -230,7 +231,7 @@ def test_config_value_caches_configuration_dom(monkeypatch: MonkeyPatch, tmp_pat
 </configuration>
 """, encoding="utf-8")
 
-	assert se.get_config_value("/configuration/build/@max-cache-size") == "100MB"
+	assert sach.get_config_value("/configuration/build/@max-cache-size") == "100MB"
 
 def test_config_value_uses_default_when_key_is_missing(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
@@ -244,10 +245,10 @@ def test_config_value_uses_default_when_key_is_missing(monkeypatch: MonkeyPatch,
 	<build/>
 </configuration>
 	""", encoding="utf-8")
-	monkeypatch.setattr(se, "get_config_directory", lambda: config_directory)
-	se._get_config_dom.cache_clear()
+	monkeypatch.setattr(sach, "get_config_directory", lambda: config_directory)
+	sach._get_config_dom.cache_clear()
 
-	assert se.get_config_value("/configuration/build/@max-cache-size") == "50MB"
+	assert sach.get_config_value("/configuration/build/@max-cache-size") == "50MB"
 
 def test_config_value_supports_empty_values(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
@@ -261,10 +262,10 @@ def test_config_value_supports_empty_values(monkeypatch: MonkeyPatch, tmp_path: 
 	<create-draft default-email=""/>
 </configuration>
 	""", encoding="utf-8")
-	monkeypatch.setattr(se, "get_config_directory", lambda: config_directory)
-	se._get_config_dom.cache_clear()
+	monkeypatch.setattr(sach, "get_config_directory", lambda: config_directory)
+	sach._get_config_dom.cache_clear()
 
-	assert se.get_config_value("/configuration/create-draft/@default-email") == ""
+	assert sach.get_config_value("/configuration/create-draft/@default-email") == ""
 
 def test_config_value_uses_default_when_file_is_not_readable(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
@@ -280,11 +281,11 @@ def test_config_value_uses_default_when_file_is_not_readable(monkeypatch: Monkey
 		del kwargs
 		raise OSError
 
-	monkeypatch.setattr(se, "get_config_directory", lambda: tmp_path)
-	se._get_config_dom.cache_clear()
+	monkeypatch.setattr(sach, "get_config_directory", lambda: tmp_path)
+	sach._get_config_dom.cache_clear()
 	monkeypatch.setattr(builtins, "open", unreadable_open)
 
-	assert se.get_config_value("/configuration/build/@max-cache-size") == "50MB"
+	assert sach.get_config_value("/configuration/build/@max-cache-size") == "50MB"
 
 def test_svg_png_cache_key_changes_with_render_inputs(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
@@ -312,9 +313,9 @@ def test_svg_png_cache_key_changes_with_render_inputs(monkeypatch: MonkeyPatch, 
 		Skip PNG optimization in cache key tests.
 		"""
 
-	monkeypatch.setattr(se.se_epub_build.cairosvg, "__version__", "1")
-	monkeypatch.setattr(se.se_epub_build, "svg2png", fake_svg2png)
-	monkeypatch.setattr(se.images, "optimize_png", fake_optimize_png)
+	monkeypatch.setattr(sach.sach_epub_build.cairosvg, "__version__", "1")
+	monkeypatch.setattr(sach.sach_epub_build, "svg2png", fake_svg2png)
+	monkeypatch.setattr(sach.images, "optimize_png", fake_optimize_png)
 	key = __convert_image(svg_path, png_path, 1, cache_directory)
 
 	assert __convert_image(svg_path, png_path, 1, cache_directory) == key
@@ -322,7 +323,7 @@ def test_svg_png_cache_key_changes_with_render_inputs(monkeypatch: MonkeyPatch, 
 	assert __convert_image(svg_path, png_path, 1, cache_directory, 700) != key
 	svg_path.write_text("<svg><path/></svg>", encoding="utf-8")
 	assert __convert_image(svg_path, png_path, 1, cache_directory) != key
-	monkeypatch.setattr(se.se_epub_build.cairosvg, "__version__", "2")
+	monkeypatch.setattr(sach.sach_epub_build.cairosvg, "__version__", "2")
 	assert __convert_image(svg_path, png_path, 1, cache_directory) != key
 
 def test_copy_template_svg_png_for_known_logo(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
@@ -331,15 +332,15 @@ def test_copy_template_svg_png_for_known_logo(monkeypatch: MonkeyPatch, tmp_path
 	"""
 
 	svg_contents = b"<svg>logo</svg>"
-	svg_sha256 = se.se_epub_build.sha256(svg_contents).hexdigest()
+	svg_sha256 = sach.sach_epub_build.sha256(svg_contents).hexdigest()
 	svg_path = tmp_path / "logo.svg"
 	png_path = tmp_path / "logo.png"
 	svg_path.write_bytes(svg_contents)
-	monkeypatch.setattr(se.se_epub_build, "SE_LOGO_SVG_SHA256", svg_sha256)
+	monkeypatch.setattr(sach.sach_epub_build, "SACH_LOGO_SVG_SHA256", svg_sha256)
 
 	assert __convert_image(svg_path, png_path, 1, tmp_path / "cache") is None
 
-	assert png_path.read_bytes() == (Path("se") / "data" / "templates" / "logo.png").read_bytes()
+	assert png_path.read_bytes() == (Path("sach") / "data" / "templates" / "logo.png").read_bytes()
 
 def test_mathml_png_cache_avoids_rendering(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 	"""
@@ -369,8 +370,8 @@ def test_mathml_png_cache_avoids_rendering(monkeypatch: MonkeyPatch, tmp_path: P
 
 		return False
 
-	monkeypatch.setattr("se.browser.installed_browsers.browsers", fake_installed_browsers)
-	monkeypatch.setattr("se.browser.webdriver.Firefox", fake_firefox_webdriver)
+	monkeypatch.setattr("sach.browser.installed_browsers.browsers", fake_installed_browsers)
+	monkeypatch.setattr("sach.browser.webdriver.Firefox", fake_firefox_webdriver)
 	monkeypatch.setattr(Path, "is_file", fake_is_file)
 	browser = Browser()
 	mathml_fragment = "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mi>x</mi></math>"
@@ -389,7 +390,7 @@ def test_mathml_png_cache_avoids_rendering(monkeypatch: MonkeyPatch, tmp_path: P
 		output_filename.write_bytes(b"1x")
 		output_filename_2x.write_bytes(b"2x")
 
-	monkeypatch.setattr(se.images, "render_mathml_to_png", fake_render_mathml_to_png)
+	monkeypatch.setattr(sach.images, "render_mathml_to_png", fake_render_mathml_to_png)
 
 	cache_paths, reused_browser = __convert_mathml_to_png(mathml_fragment, output_path, output_path_2x, cache_directory, browser)
 	output_path.unlink()

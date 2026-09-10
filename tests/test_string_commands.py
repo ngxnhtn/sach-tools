@@ -10,7 +10,7 @@ import pytest
 
 from helpers import assert_text_matches, must_run # pylint: disable=import-error
 
-import se
+import sach
 
 
 test_directory = Path(__file__).parent / "string_commands"
@@ -26,7 +26,7 @@ def test_stringcmds(cmd: str, capfd: pytest.CaptureFixture[str]):
 		for line_number, line in enumerate(cfile, start=1):
 			# each line in the file contains an input string and a "golden" string.
 			in_str, golden_str = line.split(",")
-			must_run(f"se {cmd} {in_str}")
+			must_run(f"sach {cmd} {in_str}")
 			out, _ = capfd.readouterr()
 			assert_text_matches(golden_str.strip(), out.rstrip(), f"{cmd_file}:{line_number}", "command output", f"string_commands/{cmd} line {line_number}")
 
@@ -35,6 +35,6 @@ def test_version(capfd: pytest.CaptureFixture[str]):
 	Verify that the version command returns the version. This is a separate test within
 	the module because it uses an SE internal command to return the "golden" text.
 	"""
-	must_run("se --version")
+	must_run(f"sach --version")
 	out, _ = capfd.readouterr()
-	assert out.startswith(se.VERSION)
+	assert out.startswith(sach.VERSION)

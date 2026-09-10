@@ -1,10 +1,10 @@
 USAGE
 
-	se [-h,--help] [--color] [-p,--plain] [-v,--version] <COMMAND> [<ARGS> ...]
+	sach [-h,--help] [--color] [-p,--plain] [-v,--version] <COMMAND> [<ARGS> ...]
 
 DESCRIPTION
 
-	The entry point for the Standard Ebooks toolset.
+	The entry point for the Vietnamese ebook toolset.
 
 POSITIONAL ARGUMENTS
 

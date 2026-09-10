@@ -68,14 +68,14 @@ def test_build_command(testbook__directory: Path, work__directory: Path, command
 	golden_directory = test_directory / "golden"
 
 	# run the build command itself
-	must_run(f"se {command_to_use} --output={build_directory} {book_directory}")
+	must_run(f"sach {command_to_use} --output={build_directory} {book_directory}")
 	# Extract the compatible EPUB unless this test only validates a device build artifact.
 	is_device_build_test = "--kindle" in command_to_use or "--kobo" in command_to_use
 	if not is_device_build_test:
 		epub_glob = build_directory.glob("*.epub")
 		for epub_file in epub_glob:
 			if "_advanced" not in epub_file.name:
-				must_run(f"se extract-ebook --output={extract_directory} {epub_file}")
+				must_run(f"sach extract-ebook --output={extract_directory} {epub_file}")
 				break
 
 	# verify the build and extract files against the golden ones

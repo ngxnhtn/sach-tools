@@ -1328,7 +1328,7 @@ Minor syntax fixes.
 
 ## se build
 
-- Only include Kobo/Kindle se.css compatibility fixes in those particular builds, not all builds
+- Only include Kobo/Kindle sach.css compatibility fixes in those particular builds, not all builds
 
 ## se lint
 
@@ -1340,7 +1340,7 @@ Minor syntax fixes.
 
 - Improve y-017
 
-- Make se.css linting path variable unique. Thanks to Robin Whittleton
+- Make sach.css linting path variable unique. Thanks to Robin Whittleton
 
 - Include photographer as a possible LoI contributor in m-034
 
@@ -3101,7 +3101,7 @@ Minor syntax fixes.
 
 - Update core.css to add media to @media rules for RMSDK compatibility. Thanks to Robin Whittleton
 
-- Update se.css to use `text-align: initial;`
+- Update sach.css to use `text-align: initial;`
 
 ## se build
 
@@ -3429,7 +3429,7 @@ Minor syntax fixes.
 
 - Perform most checks using the file's semantics and not the filename
 
-- Add f-014, se.css doesn't match template
+- Add f-014, sach.css doesn't match template
 
 - Only check top-level elements in m-030-35
 
@@ -3457,7 +3457,7 @@ Minor syntax fixes.
 
 - Support for new <hgroup> header scheme in tools and templates
 
-- CSS for SE boilerplate files like titlepages, colophons, and the Uncopyright page are now in a new CSS file named `se.css`, and those files no longer include `local.css`.
+- CSS for SE boilerplate files like titlepages, colophons, and the Uncopyright page are now in a new CSS file named `sach.css`, and those files no longer include `local.css`.
 
 - Corpus-wide switch to using `epub:type="z3998:signature"` instead of `class="signature"`.
 
@@ -3479,7 +3479,7 @@ Minor syntax fixes.
 
 ## se create-draft
 
-- Add support for new `se.css` file and update various template files
+- Add support for new `sach.css` file and update various template files
 
 ## se hyphenate
 

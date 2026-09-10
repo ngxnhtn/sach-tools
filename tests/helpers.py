@@ -8,6 +8,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 import regex
@@ -86,6 +87,9 @@ def run(cmd: str) -> subprocess.CompletedProcess[bytes]:
 	args = shlex.split(cmd)
 	current_environment = os.environ.copy()
 	current_environment["COLUMNS"] = "1000000"
+	# Make sure the `sach` console script (installed in this interpreter's bin dir)
+	# is resolvable when a test shells out to it.
+	current_environment["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{current_environment['PATH']}"
 	return subprocess.run(args, stderr=subprocess.PIPE, check=False, env=current_environment)
 
 def must_run(cmd: str) -> None:
@@ -140,11 +144,11 @@ def assemble_testbook(testbook__dir: Path, input_dir: Path, work__dir: Path, bui
 
 	# Rebuild file metadata
 	if build_manifest:
-		must_run(f"se build-manifest {book_dir}")
+		must_run(f"sach build-manifest {book_dir}")
 	if build_spine:
-		must_run(f"se build-spine {book_dir}")
+		must_run(f"sach build-spine {book_dir}")
 	if build_toc:
-		must_run(f"se build-toc {book_dir}")
+		must_run(f"sach build-toc {book_dir}")
 	return book_dir
 
 def clean_golden_directory(golden_dir: Path) -> None:
