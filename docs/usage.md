@@ -131,6 +131,28 @@ title case.
 
 ---
 
+## Covers
+
+`sach build-cover` draws a cover for a book from the book's own metadata —
+nothing is AI-generated, and the same book always produces the same image.
+
+```shell
+sach build-cover -l "Tiểu thuyết" --overwrite lib   # writes lib/epub/images/cover.jpg
+sach build-cover --list-themes                      # see the palettes
+sach build-cover -t "Sống mòn" -a "Nam Cao" -o cover.jpg --theme paper
+```
+
+- The **palette** comes from `schema:genre` first, then `dc:subject` (English or
+  Vietnamese words both work), and finally from a stable hash of the title, so a
+  book with no genre metadata still gets a consistent cover of its own.
+- The cover is a 1200×1800 JPEG: a themed ground, a ruled frame, the author, the
+  title set in a Vietnamese-capable serif, and a genre label. `-s WIDTHxHEIGHT`
+  changes the size; `--theme` forces a palette.
+- Run it on a source folder to read the metadata, or pass `-t`/`-a` directly.
+  Without `--overwrite` an existing cover is left alone.
+
+---
+
 ## Validation without Java
 
 If you can't run `sach build --check` (no Java/epubcheck), validate the built

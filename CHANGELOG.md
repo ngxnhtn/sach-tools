@@ -1,5 +1,15 @@
 # 4.2.0
 
+## New: procedurally generated covers
+
+- New `sach build-cover` command: draws a book cover from the book's own
+  metadata. The palette is chosen from `schema:genre`, then `dc:subject`
+  (English or Vietnamese), falling back to a stable hash of the title, so the
+  same book always gets the same cover. The cover is composed with Pillow — a
+  themed ground, ruled frame, author, title in a Vietnamese-capable serif and a
+  genre label. Nothing is AI-generated. `--theme` forces a palette,
+  `--list-themes` lists them, and `-s` sets the size.
+
 ## Vietnamese editorial improvements
 
 - `sach titlecase` is now language-aware: `-l/--language vi` (or any Vietnamese

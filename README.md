@@ -276,6 +276,10 @@ We need volunteers to take the lead on the following goals:
 
 	Build an ebook from a Vietnamese ebook source directory.
 
+-	### `sach build-cover`
+
+	Generate a cover image for an ebook from its own title, author and genre metadata. The palette is picked from the book's genre (falling back to a stable hash of its title), so the same book always gets the same cover. The cover is drawn procedurally with Pillow — nothing is AI-generated. Use `--theme` to force a palette and `--list-themes` to see them.
+
 -	### `sach build-ids`
 
 	Change `@id` attributes for non-sectioning content to their expected values across the entire ebook. IDs must be globally unique and correctly referenced, and the ebook spine must be complete.

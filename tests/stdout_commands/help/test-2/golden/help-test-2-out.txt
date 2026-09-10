@@ -18,6 +18,8 @@ POSITIONAL ARGUMENTS
 
 		• build
 
+		• build-cover
+
 		• build-ids
 
 		• build-images
