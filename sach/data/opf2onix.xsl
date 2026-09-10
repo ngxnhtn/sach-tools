@@ -442,7 +442,7 @@
 				<PublishingDetail>
 					<Publisher>
 						<PublishingRole>01</PublishingRole> <!-- 01 = Publisher -->
-						<PublisherName>Standard Ebooks</PublisherName>
+						<PublisherName><xsl:value-of select="normalize-space(opf:metadata/dc:publisher)"/></PublisherName>
 						<Website>
 							<WebsiteRole>01</WebsiteRole> <!-- 01 = Publisher’s corporate website -->
 							<WebsiteLink>https://standardebooks.org/</WebsiteLink>

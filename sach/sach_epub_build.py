@@ -551,7 +551,7 @@ def _compatibility_replacements_svg(self: 'SachEpub', file_path: Path) -> None:
 
 	# If we're adding stroke to the logo, make sure it's SE files only.
 	# 3rd party files will get mangled.
-	if dom.xpath("/svg/title[contains(., 'Standard Ebooks')]"):
+	if dom.xpath("/svg/title[contains(., 'Sách')]"):
 		if dom.xpath("/svg/title[contains(., 'titlepage')]"):
 			stroke_width = SVG_TITLEPAGE_OUTER_STROKE_WIDTH
 		else:

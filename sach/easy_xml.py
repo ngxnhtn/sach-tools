@@ -697,7 +697,7 @@ class EasyXmlTree:
 			return [EasyXmlElement(element, self.namespaces) for element in sel(self.etree)]
 
 		except cssselect.ExpressionError as ex:
-			raise sach.NotImplementedException(f"Selector not implemented in the SE toolset: [css]{selector}[/]") from ex
+			raise sach.NotImplementedException(f"Selector not implemented in the Sách toolset: [css]{selector}[/]") from ex
 
 		except parser.SelectorSyntaxError as ex:
 			raise sach.InvalidCssException(f"Invalid selector: [css]{selector}[/]") from ex

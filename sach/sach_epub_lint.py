@@ -138,14 +138,14 @@ See the `sach.print_error()` function for a comprehensive list of allowed codes.
 LIST OF ALL SE LINT MESSAGES
 
 CSS
-"c-001", "Illegal selector. [hint]Hint: Applying [css-selector]:first-of-type[/], [css-selector]:last-of-type[/], [css-selector]:nth-of-type[/] [css-selector]:nth-last-of-type[/], or [css-selector]:only-of-type[/] to [css-selector]*[/] isn’t implemented in the SE toolset. Instead of targeting [css-selector]*[/], target an element, like [css-selector]p[/]. Remember that [css-selector]*[/] may be implicit.[/hint]"
+"c-001", "Illegal selector. [hint]Hint: Applying [css-selector]:first-of-type[/], [css-selector]:last-of-type[/], [css-selector]:nth-of-type[/] [css-selector]:nth-last-of-type[/], or [css-selector]:only-of-type[/] to [css-selector]*[/] isn’t implemented in the Sách toolset. Instead of targeting [css-selector]*[/], target an element, like [css-selector]p[/]. Remember that [css-selector]*[/] may be implicit.[/hint]"
 "c-002", "Unused CSS selectors."
 "c-003", "[css-selector]\\[xml|attr][/] selector in CSS, but no XML namespace declared. [hint]Hint: Add [css]@namespace xml \"http://www.w3.org/XML/1998/namespace\";[/] to the top of this CSS file.[/hint]"
 "c-004", "Illegal [css-property]border-color[/] specified on element."
 "c-005", "Illegal [css]white-space: nowrap;[/] applied to [css-selector]abbr[/] selector."
 "c-006", "Semantic found, but missing corresponding style CSS style."
 "c-008", "CSS class only used once. [hint]Hint: Craft a selector instead of a single-use class.[/hint]"
-"c-009", "Duplicate CSS selectors. [hint]Hint: Duplicates are only acceptable if overriding S.E. base styles.[/hint]"
+"c-009", "Duplicate CSS selectors. [hint]Hint: Duplicates are only acceptable if overriding base styles.[/hint]"
 "c-010", "[xhtml]<footer>[/] missing [css]margin-top: 1em; text-align: VALUE;[/]. [hint]Hint: [css-property]text-align[/] is usually set to [val]right[/].[/hint]"
 "c-011", "Element with [css]text-align: center;[/] but [css-property]text-indent[/] is [val]1em[/]."
 "c-012", "Sectioning element without heading content, and without [css]margin-top: 20vh;[/]."
@@ -224,7 +224,7 @@ METADATA
 "m-032", "[val]afterword[/] semantic inflection found, but no MARC relator [val]waw[/] (Writer of afterword)."
 "m-033", "[val]endnotes[/] semantic inflection found, but no MARC relator [val]ann[/] (Annotator)."
 "m-034", "[val]loi[/] semantic inflection found, but no MARC relator [val]ill[/] (Illustrator) or [val]pht[/] (Photographer)."
-"m-035", "Unexpected S.E. identifier in colophon."
+"m-035", "Unexpected ebook identifier in colophon."
 "m-036", "Variable not replaced with value."
 "m-037", "Expected transcription/page scan source link not found."
 "m-038", "[val]schema:accessMode[/] property set to [val]visual[/], but no images in ebook."
@@ -243,9 +243,9 @@ METADATA
 "m-051", "Missing expected element in metadata."
 "m-052", "[xml]<dc:title>[/] element contains numbers, but no [xml]<meta property=\"dcterms:alternative\" refines="#title"> element in metadata."
 "m-053", "[xml]<meta property=\"schema:genre\">[/] elements not in alphabetical order."
-"m-054", "Non-canonical Standard Ebooks URL. Expected: [url]https://standardebooks.org/ebooks/<AUTHOR>/<TITLE>\\[/<CONTRIBUTOR> ...][/]. [hint]Hint: No trailing slash.[/hint]"
+"m-054", "Non-canonical ebook URL. Expected: [url]https://standardebooks.org/ebooks/<AUTHOR>/<TITLE>\\[/<CONTRIBUTOR> ...][/]. [hint]Hint: No trailing slash.[/hint]"
 "m-055", "[xml]<meta property=\"schema:abstract\">[/] element doesn’t end with a period."
-"m-056", "Author name present in [xml]<dc:description>[/] element, but the first instance of their name isn’t linked to their S.E. author page."
+"m-056", "Author name present in [xml]<dc:description>[/] element, but the first instance of their name isn’t linked to their author page."
 "m-057", "Illegal [attr]@xml:lang[/] attribute in [xml]<dc:description>[/] element. [hint]Hint: [attr]@xml:lang[/] should be [attr]@lang[/].[/hint]"
 "m-058", "[val]schema:genre[/] that implies other [val]schema:genre[/]. [hint]Hint: Remove the [val]schema:genre[/] that is implied.[/hint]"
 "m-059", "Link found in colophon, but missing matching [xhtml]<dc:source>[/] element in metadata."
@@ -253,10 +253,10 @@ METADATA
 "m-061", "Link must be preceded by [text]the[/]."
 "m-063", "Cover image has not been built."
 "m-062", "[xml]<dc:title>[/] element missing matching [xml]<meta property=\"file-as\">[/] element."
-"m-064", "S.E. ebook linked in [xml]<dc:description>[/] but not italicized."
+"m-064", "Ebook linked in [xml]<dc:description>[/] but not italicized."
 "m-065", "Word count in metadata doesn’t match actual word count."
 "m-066", "Subject identifiers must be IDs and not URLs."
-"m-067", "Non-S.E. link in [xml]<dc:description>[/]."
+"m-067", "Non-canonical link in [xml]<dc:description>[/]."
 "m-068", "[xml]<dc:title>[/] element missing matching [xml]<meta property=\"title-type\">[/] element."
 "m-069", "[text]comprised of[/] in metadata. [hint]Hint: Is there a better phrase to use here?[/hint]"
 "m-070", "Glossary entries not present in the text:"
@@ -498,7 +498,7 @@ XHTML
 "x-017", "[attr]@id[/] attribute value used more than once in ebook."
 "x-018", "Unused [attr]@id[/] attribute."
 "x-019", "Unexpected value of [attr]@id[/] attribute."
-"x-020", "Link to [path]sach.css[/] in [xhtml]<head>[/], but this file isn’t an S.E. boilerplate file."
+"x-020", "Link to [path]sach.css[/] in [xhtml]<head>[/], but this file isn’t a boilerplate file."
 "x-021", "[xhtml]<figure>[/] element with no [attr]@id[/] attribute."
 "x-022", "Illegal fractions in SVG [attr]@viewBox[/] attribute."
 
@@ -909,7 +909,7 @@ def _lint_metadata_checks(self: 'SachEpub') -> list[LintMessage]:
 			# Use `\\b` in the regex to avoid matching words like `Dickensian`.
 			nodes = metadata_dom_with_parsed_long_description.xpath(f"/package/metadata/dc:description/p[.//text()[re:test(., '\\b{regex.escape(author_last_name)}\\b', 'i') and not(./ancestor-or-self::i or ./ancestor-or-self::a) and not((./ancestor-or-self::p/preceding-sibling::p//a|./preceding-sibling::a)[re:test(@href, '^https://standardebooks\\.org/.+') and re:test(., '\\b{regex.escape(author_last_name)}\\b', 'i')])]]")
 			if nodes:
-				messages.append(LintMessage("m-056", "Author name present in [xml]<dc:description>[/] element, but the first instance of their name isn’t linked to their S.E. author page.", sach.MESSAGE_TYPE_ERROR, self.metadata_file_path, LintSubmessage.from_nodes(nodes)))
+				messages.append(LintMessage("m-056", "Author name present in [xml]<dc:description>[/] element, but the first instance of their name isn’t linked to their author page.", sach.MESSAGE_TYPE_ERROR, self.metadata_file_path, LintSubmessage.from_nodes(nodes)))
 
 		# Did we mention an SE book in the `<dc:description>`, but without italics?
 		# Only match if the title appears to contain an uppercase letter. This prevents matches on a non-title link like `<a href="...">short stories</a>`. Xpath 1.0 doesn't support Unicode character classes like `\p{Letter}` so we do an additional filtering step.
@@ -921,11 +921,11 @@ def _lint_metadata_checks(self: 'SachEpub') -> list[LintMessage]:
 				filtered_nodes.append(node)
 
 		if filtered_nodes:
-			messages.append(LintMessage("m-064", "S.E. ebook linked in [xml]<dc:description>[/] but not italicized.", sach.MESSAGE_TYPE_ERROR, self.metadata_file_path, LintSubmessage.from_nodes(filtered_nodes)))
+			messages.append(LintMessage("m-064", "Ebook linked in [xml]<dc:description>[/] but not italicized.", sach.MESSAGE_TYPE_ERROR, self.metadata_file_path, LintSubmessage.from_nodes(filtered_nodes)))
 
 		nodes = metadata_dom_with_parsed_long_description.xpath("/package/metadata/dc:description//a[not(re:test(@href, '^https?://standardebooks\\.org'))]")
 		if nodes:
-			messages.append(LintMessage("m-067", "Non-S.E. link in [xml]<dc:description>[/].", sach.MESSAGE_TYPE_ERROR, self.metadata_file_path, LintSubmessage.from_nodes(nodes)))
+			messages.append(LintMessage("m-067", "Non-canonical link in [xml]<dc:description>[/].", sach.MESSAGE_TYPE_ERROR, self.metadata_file_path, LintSubmessage.from_nodes(nodes)))
 
 		nodes = metadata_dom_with_parsed_long_description.xpath("/package/metadata/dc:description/p[re:test(., 'Nobel prize\\b') or re:test(., 'Nobel Prize for\\b')]")
 		if nodes:
@@ -1264,7 +1264,7 @@ def _lint_metadata_checks(self: 'SachEpub') -> list[LintMessage]:
 def _get_malformed_urls(dom: EasyXmlTree, filename: Path) -> list[LintMessage]:
 	"""
 	Helper function used in self.lint()
-	Get a list of URLs in the epub that don't match SE standards.
+	Get a list of URLs in the epub that don't match Sách standards.
 
 	INPUTS
 	dom: A ODM tree to check
@@ -1336,13 +1336,13 @@ def _get_malformed_urls(dom: EasyXmlTree, filename: Path) -> list[LintMessage]:
 	if nodes:
 		messages.append(LintMessage("m-026", "Non-canonical Wikipedia URL. Expected: [url]https://en.wikipedia.org/wiki/<ARTICLE-ID>[/].", sach.MESSAGE_TYPE_ERROR, filename, LintSubmessage.from_nodes(nodes)))
 
-	# Note that SE URLs must have a trailing slash if referring to the homepage (i.e., `https://standardebook.org/`), but must *not* have a trailing slash otherwise.
-	# SE URLs *may* have an anchor (`#`) as we may be referring to a single URL pointing to multiple page scans in the colophon (i.e., `https://standardebooks.org/ebooks/<AUTHOR>/<TITLE>#page-scans`).
+	# Note that canonical ebook URLs must have a trailing slash if referring to the homepage (i.e., `https://standardebook.org/`), but must *not* have a trailing slash otherwise.
+	# Canonical ebook URLs *may* have an anchor (`#`) as we may be referring to a single URL pointing to multiple page scans in the colophon (i.e., `https://standardebooks.org/ebooks/<AUTHOR>/<TITLE>#page-scans`).
 	search_regex = r"https?://(.+\.)?standardebooks\.org/"
 	expected_regex = r"https://standardebooks\.org(/|(/[a-z0-9\-_]+)+)($|[#\"<])"
 	nodes = dom.xpath(f"/package/metadata/*[( (re:test(., '{search_regex}') and not(re:test(., '{expected_regex}'))) or (re:test(@href, '{search_regex}') and not(re:test(@href, '{expected_regex}'))) )] | /html/body//a[re:test(@href, '{search_regex}') and not(re:test(@href, '{expected_regex}'))]")
 	if nodes:
-		messages.append(LintMessage("m-054", "Non-canonical Standard Ebooks URL. Expected: [url]https://standardebooks.org/ebooks/<AUTHOR>/<TITLE>\\[/<CONTRIBUTOR> ...][/]. [hint]Hint: No trailing slash.[/hint]", sach.MESSAGE_TYPE_ERROR, filename, LintSubmessage.from_nodes(nodes)))
+		messages.append(LintMessage("m-054", "Non-canonical ebook URL. Expected: [url]https://standardebooks.org/ebooks/<AUTHOR>/<TITLE>\\[/<CONTRIBUTOR> ...][/]. [hint]Hint: No trailing slash.[/hint]", sach.MESSAGE_TYPE_ERROR, filename, LintSubmessage.from_nodes(nodes)))
 
 	search_regex = r"^https?://(.+\.)?gutenberg\.ca/"
 	expected_regex = r"^https://gutenberg\.ca/.+\.html$"
@@ -1465,7 +1465,7 @@ def _lint_css_checks(self: 'SachEpub', local_css_path: Path, abbr_with_whitespac
 	matches = source_file.findall(r"(?:^| )(?:[^a-z\s][^\s]+?|\*|):(?:first-of-type|last-of-type|nth-of-type|nth-last-of-type|only-of-type)", flags=regex.MULTILINE)
 
 	if matches:
-		messages.append(LintMessage("c-001", "Illegal selector. [hint]Hint: Applying [css-selector]:first-of-type[/], [css-selector]:last-of-type[/], [css-selector]:nth-of-type[/] [css-selector]:nth-last-of-type[/], or [css-selector]:only-of-type[/] to [css-selector]*[/] isn’t implemented in the SE toolset. Instead of targeting [css-selector]*[/], target an element, like [css-selector]p[/]. Remember that [css-selector]*[/] may be implicit.[/hint]", sach.MESSAGE_TYPE_ERROR, local_css_path, LintSubmessage.from_matches(matches, formatting_tag="css-selector")))
+		messages.append(LintMessage("c-001", "Illegal selector. [hint]Hint: Applying [css-selector]:first-of-type[/], [css-selector]:last-of-type[/], [css-selector]:nth-of-type[/] [css-selector]:nth-last-of-type[/], or [css-selector]:only-of-type[/] to [css-selector]*[/] isn’t implemented in the Sách toolset. Instead of targeting [css-selector]*[/], target an element, like [css-selector]p[/]. Remember that [css-selector]*[/] may be implicit.[/hint]", sach.MESSAGE_TYPE_ERROR, local_css_path, LintSubmessage.from_matches(matches, formatting_tag="css-selector")))
 
 	# If we select on the `xml` namespace, make sure we define the namespace in the CSS, otherwise the selector won't work.
 	# We do this using a regex and not with cssutils, because cssutils will barf in this particular case and not even record the selector.
@@ -1746,7 +1746,7 @@ def _lint_special_file_checks(self: 'SachEpub', source_file: SourceFile, dom: Ea
 		# 2. The identifier in a page scans link in the case of multiple page scans, in which case the identifier must match but an anchor is allowed after the identifier.
 		nodes = dom.xpath(f"/html/body//a[re:test(@href, '^https?://standardebooks.org/ebooks/') and (not(re:test(@href, '^https://{identifier}(#.+)?$')) or (not(contains(@href, '#')) and text()!='{identifier}'))]")
 		if nodes:
-			messages.append(LintMessage("m-035", "Unexpected S.E. identifier in colophon.", sach.MESSAGE_TYPE_ERROR, filename, LintSubmessage.from_nodes(nodes)))
+			messages.append(LintMessage("m-035", "Unexpected ebook identifier in colophon.", sach.MESSAGE_TYPE_ERROR, filename, LintSubmessage.from_nodes(nodes)))
 
 		# Check if we forgot to fill any variable slots.
 		missing_colophon_vars = [match for var in SACH_VARIABLES if (match := source_file.search(fr"\b{var}\b")) is not None]
@@ -3362,7 +3362,7 @@ def _lint_xhtml_xhtml_checks(source_file: SourceFile, dom: EasyXmlTree) -> list[
 	if filename.name not in ("titlepage.xhtml", "imprint.xhtml", "colophon.xhtml", "uncopyright.xhtml"):
 		nodes = dom.xpath("/html/head/link[@href='../css/sach.css']")
 		if nodes:
-			messages.append(LintMessage("x-020", "Link to [path]sach.css[/] in [xhtml]<head>[/], but this file isn’t an S.E. boilerplate file.", sach.MESSAGE_TYPE_ERROR, filename, LintSubmessage.from_node_tags(nodes)))
+			messages.append(LintMessage("x-020", "Link to [path]sach.css[/] in [xhtml]<head>[/], but this file isn’t a boilerplate file.", sach.MESSAGE_TYPE_ERROR, filename, LintSubmessage.from_node_tags(nodes)))
 
 	# Check that all `<img>` elements have an `@id` attribute. If the `<img>` has a parent `<figure>`, then the `<figure>` should have the `@id`.
 	nodes = dom.xpath("/html/body//figure[not(@id)]")
@@ -3888,7 +3888,7 @@ def lint(self: 'SachEpub', skip_lint_ignore: bool, allowed_messages: list[str] |
 		for selector in duplicate_selectors:
 			matches += css_source_file.find_selector(selector)
 
-		messages.append(LintMessage("c-009", "Duplicate CSS selectors. [hint]Hint: Duplicates are only acceptable if overriding S.E. base styles.[/hint]", sach.MESSAGE_TYPE_WARNING, local_css_path, LintSubmessage.from_matches(matches, formatting_tag="css-selector")))
+		messages.append(LintMessage("c-009", "Duplicate CSS selectors. [hint]Hint: Duplicates are only acceptable if overriding base styles.[/hint]", sach.MESSAGE_TYPE_WARNING, local_css_path, LintSubmessage.from_matches(matches, formatting_tag="css-selector")))
 
 	# Store a list of CSS selectors, and duplicate it into a list of unused selectors, for later checks.
 	# We use a regex to remove pseudo-elements like `::before`, because we want the *selectors* to see if they're unused.

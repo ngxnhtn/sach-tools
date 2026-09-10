@@ -2,7 +2,7 @@
 <ONIXMessage xmlns="http://ns.editeur.org/onix/3.1/reference" release="3.1">
 	<Header>
 		<Sender>
-			<SenderName>Standard Ebooks</SenderName>
+			<SenderName>Sách</SenderName>
 		</Sender>
 		<SentDateTime>19000101T000000Z</SentDateTime>
 	</Header>
@@ -165,7 +165,7 @@
 		<PublishingDetail>
 			<Publisher>
 				<PublishingRole>01</PublishingRole>
-				<PublisherName>Standard Ebooks</PublisherName>
+				<PublisherName>Sách</PublisherName>
 				<Website>
 					<WebsiteRole>01</WebsiteRole>
 					<WebsiteLink>https://standardebooks.org/</WebsiteLink>

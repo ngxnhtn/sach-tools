@@ -377,7 +377,7 @@ def _get_config_dom() -> sach.easy_xml.EasyXmlTree | None:
 
 def get_config_value(key: str) -> str:
 	"""
-	Return the configured value for a Standard Ebooks tool setting.
+	Return the configured value for a Sách tool setting.
 	"""
 
 	default_value = DEFAULT_CONFIG_VALUES.get(key, "")
@@ -394,7 +394,7 @@ def get_config_value(key: str) -> str:
 
 def get_config_attributes(key: str) -> dict[str, str]:
 	"""
-	Return the configured attributes for a Standard Ebooks tool setting.
+	Return the configured attributes for a Sách tool setting.
 	"""
 
 	config_dom = _get_config_dom()

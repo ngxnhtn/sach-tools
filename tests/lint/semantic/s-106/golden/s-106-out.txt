@@ -1,6 +1,5 @@
 s-106 [Error] colophon.xhtml Proper name in the colophon without parent `<a href="...">` or `<b epub:type="z3998:given-name">`, or `<b>` if anonymous.
- Line 17:       <p>This ebook was produced for<br/>
-        <a href="https://standardebooks.org/">Standard Ebooks</a><br/>
+ Line 17:       <p>This ebook was produced<br/>
         by<br/>
         Emma Sweeney,<br/>
         and is based on a transcription produced in <time>1998</time> by<br/>

@@ -871,8 +871,8 @@ def _create_draft(args: Namespace, plain_output: bool):
 					colophon_xhtml = colophon_xhtml.replace("<a href=\"AUTHOR_WIKI_URL\">AUTHOR_NAME</a>", contributor_string)
 
 				if translators:
-					translator_block = f"It was translated from ORIGINAL_LANGUAGE in <time>TRANSLATION_YEAR</time> by<br/>\n\t\t\t{_generate_contributor_string(translators, True)}.</p>"
-					colophon_xhtml = colophon_xhtml.replace("</p>\n\t\t\t<p>This ebook was produced for<br/>", f"<br/>\n\t\t\t{translator_block}\n\t\t\t<p>This ebook was produced for<br/>")
+					translator_block = f"It was translated from ORIGINAL_LANGUAGE in <time>TRANSLATION_YEAR</time> by<br/>\n			{_generate_contributor_string(translators, True)}.</p>"
+					colophon_xhtml = colophon_xhtml.replace("</p>\n			<p>This ebook was produced<br/>", f"<br/>\n			{translator_block}\n			<p>This ebook was produced<br/>")
 
 				if transcription_url:
 					colophon_xhtml = colophon_xhtml.replace("TRANSCRIPTION_URL", transcription_url)
@@ -977,7 +977,7 @@ def create_draft(plain_output: bool) -> int:
 	parser.add_argument("-r", "--translator", dest="translator", nargs="+", help="A translator of the ebook.")
 	parser.add_argument("-t", "--title", dest="title", required=True, help="The title of the ebook.")
 	parser.add_argument("-v", "--verbose", action="store_true", help="Increase output verbosity.")
-	parser.add_argument("-w", "--white-label", action="store_true", help="Create a generic epub skeleton without Standard Ebooks branding.")
+	parser.add_argument("-w", "--white-label", action="store_true", help="Create a generic epub skeleton without Sách branding.")
 	args = parser.parse_args()
 
 	if args.email is None:
