@@ -4,13 +4,15 @@ A collection of tools used to produce Vietnamese ebook files, including basic se
 
 Installing the toolset makes the `sach` command line executable available. Its various commands are described below, or you can use `sach help` to list them.
 
+**New to sach? Start with the [usage guide](docs/usage.md)** — it covers installation, the production pipeline, the Vietnamese-specific adaptations, and validation without Java.
+
 # Installation
 
 The toolset requires Python >= 3.10.12.
 
 To install the toolset locally for development and debugging, see [Installation for toolset developers](#installation-for-toolset-developers).
 
-Optionally, install [Ace](https://daisy.github.io/ace/) and the `se build --check` command will automatically run it as part of the checking process.
+Optionally, install [Ace](https://daisy.github.io/ace/) and the `sach build --check` command will automatically run it as part of the checking process.
 
 ## Ubuntu 24.04 (Noble)
 
@@ -19,7 +21,7 @@ Optionally, install [Ace](https://daisy.github.io/ace/) and the `se build --chec
 sudo apt install --yes default-jre git python3-dev python3-pip python3-venv pipx
 
 # Install the toolset.
-pipx install standardebooks
+pipx install sach
 ```
 
 ## Ubuntu 20.04 (Focal)
@@ -33,21 +35,21 @@ python3 -m pip install --user pipx
 python3 -m pipx ensurepath
 
 # Install the toolset.
-pipx install --python=3.12 --fetch-missing-python standardebooks
+pipx install --python=3.12 --fetch-missing-python sach
 ```
 
 ### Optional: Install shell completions
 
 ```shell
 # Install ZSH completions.
-sudo ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/standardebooks/lib/python3.*/site-packages/se/completions/zsh/_se /usr/share/zsh/vendor-completions/_se && hash -rf && compinit
+sudo ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/sach/lib/python3.*/site-packages/sach/completions/zsh/_se /usr/share/zsh/vendor-completions/_sach && hash -rf && compinit
 
 # Install Bash completions.
 mkdir --parents $HOME/.local/share/bash-completion/completions/
-ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/standardebooks/lib/python3.*/site-packages/se/completions/bash/se $HOME/.local/share/bash-completion/completions/se
+ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/sach/lib/python3.*/site-packages/sach/completions/bash/sach $HOME/.local/share/bash-completion/completions/sach
 
 # Install Fish completions.
-ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/standardebooks/lib/python3.*/site-packages/se/completions/fish/se.fish $HOME/.config/fish/completions/
+ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/sach/lib/python3.*/site-packages/sach/completions/fish/sach.fish $HOME/.config/fish/completions/
 ```
 
 ## Fedora 43
@@ -60,20 +62,20 @@ sudo dnf install pipx python3-devel gcc libxslt-devel git java-25-openjdk-headle
 pipx ensurepath
 
 # Install the toolset.
-pipx install standardebooks
+pipx install sach
 ```
 
 ### Optional: Install shell completions
 
 ```shell
 # Install ZSH completions.
-sudo ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/standardebooks/lib/python3.*/site-packages/se/completions/zsh/_se /usr/share/zsh/vendor-completions/_se && hash -rf && compinit
+sudo ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/sach/lib/python3.*/site-packages/sach/completions/zsh/_se /usr/share/zsh/vendor-completions/_sach && hash -rf && compinit
 
 # Install Bash completions.
 mkdir --parents $HOME/.local/share/bash-completion/completions/
-ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/standardebooks/lib/python3.*/site-packages/se/completions/bash/se $HOME/.local/share/bash-completion/completions/se
+ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/sach/lib/python3.*/site-packages/sach/completions/bash/sach $HOME/.local/share/bash-completion/completions/sach
 # Install Fish completions.
-ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/standardebooks/lib/python3.*/site-packages/se/completions/fish/se $HOME/.config/fish/completions/se.fish
+ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/sach/lib/python3.*/site-packages/sach/completions/fish/sach $HOME/.config/fish/completions/sach.fish
 ```
 
 ## macOS
@@ -87,7 +89,7 @@ ln --symbolic $(pipx environment --value PIPX_LOCAL_VENVS)/standardebooks/lib/py
 2. Install the tools with Homebrew:
 
 	```shell
-	brew install standardebooks
+	brew install sach
 	```
 
 When building a project with SVG images, a browser instance is used to render SVGs to PNGs. If you don’t have Chrome or Firefox installed then you need to manually allow Safari to be instantiated by the toolset:
@@ -96,7 +98,7 @@ When building a project with SVG images, a browser instance is used to render SV
 safaridriver --enable
 ```
 
-Note that Safari currently doesn't support "headless" mode, so you may see Safari windows appear and disappear as `se build` processes SVGs. If these windows annoy you, install Firefox or Chrome and `se build` will use them instead of Safari.
+Note that Safari currently doesn't support "headless" mode, so you may see Safari windows appear and disappear as `sach build` processes SVGs. If these windows annoy you, install Firefox or Chrome and `sach build` will use them instead of Safari.
 
 ### Alternative: pipx
 
@@ -109,13 +111,13 @@ pipx ensurepath
 sudo ln -sfn $(brew --prefix)/opt/openjdk/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk.jdk
 
 # Install the toolset.
-pipx install --python "$(brew --prefix)"/bin/python3.12 standardebooks
+pipx install --python "$(brew --prefix)"/bin/python3.12 sach
 
 # Optional: Bash users who have set up bash-completion via brew can install tab completion.
-ln -s $(pipx environment --value PIPX_LOCAL_VENVS)/standardebooks/lib/python3.*/site-packages/se/completions/bash/se $(brew --prefix)/etc/bash_completion.d/se
+ln -s $(pipx environment --value PIPX_LOCAL_VENVS)/sach/lib/python3.*/site-packages/sach/completions/bash/sach $(brew --prefix)/etc/bash_completion.d/sach
 
 # Optional: Fish users can install tab completion.
-ln -s $(pipx environment --value PIPX_LOCAL_VENVS)/standardebooks/lib/python3.*/site-packages/se/completions/fish/se $HOME/.config/fish/completions/se.fish
+ln -s $(pipx environment --value PIPX_LOCAL_VENVS)/sach/lib/python3.*/site-packages/sach/completions/fish/sach $HOME/.config/fish/completions/sach.fish
 ```
 
 ## Windows 11
@@ -141,7 +143,7 @@ These instructions install the toolset directly in Windows, without Windows Subs
 3. Close PowerShell and open it again, then install the toolset:
 
 	```powershell
-	pipx install --python 3.12 standardebooks
+	pipx install --python 3.12 sach
 	```
 
 ## OpenBSD 6.6
@@ -170,54 +172,54 @@ These instructions were tested on OpenBSD 6.6, but may also work on 6.5.
 
 	```shell
 	# Install the toolset.
-	pipx install standardebooks
+	pipx install sach
 	```
 
 ## Installation for toolset developers
 
 If you want to work on the toolset source, it’s helpful to tell `pipx` to install the package in “editable” mode. This will allow you to edit the source of the package live and see changes immediately, without having to uninstall and re-install the package.
 
-To do that, follow the general installation instructions above; but instead of doing `pipx install standardebooks`, do the following:
+To do that, follow the general installation instructions above; but instead of doing `pipx install sach`, do the following:
 
 ```shell
-git clone https://github.com/standardebooks/tools.git
-pipx install --editable ./tools
+git clone https://example.com/sach-toolset.git
+pipx install --editable ./sach-toolset
 ```
 
-Now the `se` binary is in your path, and any edits you make to source files in the `tools/` directory are immediately reflected when executing the binary.
+Now the `sach` binary is in your path, and any edits you make to source files in the `tools/` directory are immediately reflected when executing the binary.
 
 ### Running commands on the entire corpus
 
-As a developer, it’s often useful to run an `se` command like `se lint` or `se build` on the entire corpus for testing purposes. This can be very time-consuming in a regular invocation (like `se lint /path/to/ebook/repos/*`), because each argument is processed sequentially. Instead of waiting for a single invocation to process all of its arguments sequentially, use [GNU Parallel](https://www.gnu.org/software/parallel/) to start multiple invocations in parallel, with each one processing a single argument. For example:
+As a developer, it’s often useful to run an `sach` command like `sach lint` or `sach build` on the entire corpus for testing purposes. This can be very time-consuming in a regular invocation (like `sach lint /path/to/ebook/repos/*`), because each argument is processed sequentially. Instead of waiting for a single invocation to process all of its arguments sequentially, use [GNU Parallel](https://www.gnu.org/software/parallel/) to start multiple invocations in parallel, with each one processing a single argument. For example:
 
 ```shell
 # Slow: Each argument is processed in sequence.
-se lint /path/to/ebook/repos/*
+sach lint /path/to/ebook/repos/*
 
 # Fast: Multiple invocations each process a single argument in parallel.
-export COLUMNS; parallel --keep-order se lint ::: /path/to/ebook/repos/*
+export COLUMNS; parallel --keep-order sach lint ::: /path/to/ebook/repos/*
 ```
 
 The toolset tries to detect when it’s being invoked from `parallel`, and it adjusts its output to accommodate.
 
-We export `COLUMNS` because `se lint` needs to know the width of the terminal so that it can format its tabular output correctly. We pass the `--keep-order` flag to output results in the order we passed them in, which is useful if comparing the results of multiple runs.
+We export `COLUMNS` because `sach lint` needs to know the width of the terminal so that it can format its tabular output correctly. We pass the `--keep-order` flag to output results in the order we passed them in, which is useful if comparing the results of multiple runs.
 
 ### Linting with `pylint` and `pyright`
 
-Before we can use `pylint` or `pyright` on the toolset source, we have to inject them (and additional typings) into the venv `pipx` created for the `standardebooks` package:
+Before we can use `pylint` or `pyright` on the toolset source, we have to inject them (and additional typings) into the venv `pipx` created for the `sach` package:
 
 ```shell
-pipx inject standardebooks pylint==4.0.6 pyright==1.1.411 types-Pygments==2.21.0.20260819 types-requests==2.33.0.20260518 types-setuptools==82.0.0.20260518 types-lxml==2026.2.16
+pipx inject sach pylint==4.0.6 pyright==1.1.411 types-Pygments==2.21.0.20260819 types-requests==2.33.0.20260518 types-setuptools==82.0.0.20260518 types-lxml==2026.2.16
 ```
 
-Then make sure to call the `pylint` and `pyright` binaries that `pipx` installed in the `standardebooks` venv, *not* any other globally-installed binaries:
+Then make sure to call the `pylint` and `pyright` binaries that `pipx` installed in the `sach` venv, *not* any other globally-installed binaries:
 
 ```shell
 cd /path/to/tools/repo
-$HOME/.local/share/pipx/venvs/standardebooks/bin/pylint .
+$HOME/.local/share/pipx/venvs/sach/bin/pylint .
 
 # Specify the venv path to `pyright` so that it knows where to look for libraries.
-$HOME/.local/share/pipx/venvs/standardebooks/bin/pyright --venvpath=$HOME/.local/share/pipx/venvs/ .
+$HOME/.local/share/pipx/venvs/sach/bin/pyright --venvpath=$HOME/.local/share/pipx/venvs/ .
 ```
 
 ### Testing with `pytest`
@@ -258,159 +260,159 @@ We need volunteers to take the lead on the following goals:
 
 # Tool descriptions
 
--	### `se add-file`
+-	### `sach add-file`
 
 	Add an SE template file and any accompanying CSS.
 
--	### `se british2american`
+-	### `sach british2american`
 
 	Try to convert British quote style to American quote style in `DIRECTORY/src/epub/text/`.
 
-	Quotes must already be typogrified using the `se typogrify` tool.
+	Quotes must already be typogrified using the `sach typogrify` tool.
 
 	This script isn’t perfect; proofreading is required, especially near closing quotes near to em-dashes.
 
--	### `se build`
+-	### `sach build`
 
-	Build an ebook from a Standard Ebook source directory.
+	Build an ebook from a Vietnamese ebook source directory.
 
--	### `se build-ids`
+-	### `sach build-ids`
 
 	Change `@id` attributes for non-sectioning content to their expected values across the entire ebook. IDs must be globally unique and correctly referenced, and the ebook spine must be complete.
 
--	### `se build-images`
+-	### `sach build-images`
 
 	Generate ebook cover and titlepages for Vietnamese ebooks, and then build ebook covers and titlepages, placing the output in `DIRECTORY/src/epub/images/`.
 
--	### `se build-manifest`
+-	### `sach build-manifest`
 
 	Generate the `<manifest>` element for the given Vietnamese ebook source directory and write it to the ebook’s metadata file.
 
--	### `se build-spine`
+-	### `sach build-spine`
 
 	Generate the `<spine>` element for the given Vietnamese ebook source directory and write it to the ebook’s metadata file.
 
--	### `se build-svg-titles`
+-	### `sach build-svg-titles`
 
 	Update or add SVG `<title>` elements based on the `@alt` attributes from the `<img>` elements.
 
--	### `se build-title`
+-	### `sach build-title`
 
 	Generate the title of an XHTML file based on its headings and update the file’s `<title>` element.
 
--	### `se build-toc`
+-	### `sach build-toc`
 
 	Generate the table of contents for the ebook’s source directory and update the ToC file.
 
--	### `se clean`
+-	### `sach clean`
 
 	Prettify and canonicalize individual XHTML, SVG, or CSS files, or all XHTML, SVG, or CSS files in a source directory.
 
--	### `se compare-versions`
+-	### `sach compare-versions`
 
 	Use a web browser to render and compare XHTML files in an ebook repository. Run on a dirty repository to visually compare the repository’s dirty state with its clean state. If a file renders differently, place screenshots of the new, original, and diff (if available) renderings in the current working directory. A file called diff.html is created to allow for side-by-side comparisons of original and new files.
 
--	### `se create-draft`
+-	### `sach create-draft`
 
-	Create the skeleton of a new Standard Ebook.
+	Create the skeleton of a new Vietnamese ebook.
 
--	### `se css-select`
+-	### `sach css-select`
 
 	Print the results of a CSS selector evaluated against a set of XHTML files.
 
--	### `se dec2roman`
+-	### `sach dec2roman`
 
 	Convert a decimal number to a Roman numeral.
 
--	### `se extract-ebook`
+-	### `sach extract-ebook`
 
 	Extract an .epub, .mobi, or .azw3 ebook into `./FILENAME.extracted/` or a target directory.
 
--	### `se find-mismatched-dashes`
+-	### `sach find-mismatched-dashes`
 
 	Find words with mismatched dashes in a set of XHTML files. For example, `extra-physical` in one file and `extraphysical` in another.
 
--	### `se find-mismatched-diacritics`
+-	### `sach find-mismatched-diacritics`
 
 	Find words with mismatched diacritics in a set of XHTML files. For example, `cafe` in one file and `café` in another.
 
--	### `se find-unusual-characters`
+-	### `sach find-unusual-characters`
 
 	Find characters outside a nominal expected range in a set of XHTML files. This can be useful to find transcription mistakes and mojibake.
 
--	### `se help`
+-	### `sach help`
 
 	List available SE commands.
 
--	### `se hyphenate`
+-	### `sach hyphenate`
 
 	Insert soft hyphens at syllable breaks in an XHTML file.
 
--	### `se interactive-replace`
+-	### `sach interactive-replace`
 
 	Perform an interactive search and replace on a list of files using Python-flavored regex. The view is scrolled using the arrow keys, with Alt for page-at-a-time scrolling in any direction. Basic Emacs (default) or Vim-style navigation is available. The following actions are possible: (y) Accept replacement. (n) Reject replacement. (a) Accept all remaining replacements in this file. (r) Reject all remaining replacements in this file. (c) Center on match. (q) Save this file and quit.
 
--	### `se lint`
+-	### `sach lint`
 
 	Check for various Vietnamese ebook style errors.
 
--	### `se make-url-safe`
+-	### `sach make-url-safe`
 
 	Make a string URL-safe.
 
--	### `se modernize-spelling`
+-	### `sach modernize-spelling`
 
 	Modernize spelling of some archaic words, and replace words that may be archaically compounded with a dash to a more modern spelling. For example, replace `ash-tray` with `ashtray`.
 
--	### `se prepare-release`
+-	### `sach prepare-release`
 
 	Calculate work word count, insert release date if not yet set, and update modified date and revision number.
 
--	### `se recompose-epub`
+-	### `sach recompose-epub`
 
 	Recompose a Vietnamese ebook source directory into a single HTML5 file, and print to standard output.
 
--	### `se renumber-endnotes`
+-	### `sach renumber-endnotes`
 
 	Renumber all endnotes and noterefs sequentially from the beginning.
 
--	### `se roman2dec`
+-	### `sach roman2dec`
 
 	Convert a Roman numeral to a decimal number.
 
--	### `se semanticate`
+-	### `sach semanticate`
 
-	Apply some scriptable semantics rules from the Vietnamese ebook semantics manual to a Standard Ebook source directory.
+	Apply some scriptable semantics rules from the Vietnamese ebook semantics manual to a Vietnamese ebook source directory.
 
--	### `se shift-endnotes`
+-	### `sach shift-endnotes`
 
 	Increment or decrement the specified endnote and all following endnotes by a specified amount.
 
--	### `se shift-illustrations`
+-	### `sach shift-illustrations`
 
 	Increment or decrement the specified illustration and all following illustrations by 1 or a specified amount.
 
--	### `se split-file`
+-	### `sach split-file`
 
 	Split an XHTML file into many files at all instances of `<!--se:split-->`, and include a header template for each file.
 
--	### `se titlecase`
+-	### `sach titlecase`
 
 	Convert a string to titlecase.
 
--	### `se typogrify`
+-	### `sach typogrify`
 
-	Apply some scriptable typography rules from the Vietnamese ebook typography manual to a Standard Ebook source directory.
+	Apply some scriptable typography rules from the Vietnamese ebook typography manual to a Vietnamese ebook source directory.
 
--	### `se unicode-names`
+-	### `sach unicode-names`
 
 	Display Unicode code points, descriptions, and links to more details for each character in a string. Useful for differentiating between different flavors of spaces, dashes, and invisible characters like word joiners.
 
--	### `se word-count`
+-	### `sach word-count`
 
 	Count the number of words in an HTML file and optionally categorize by length.
 
--	### `se xpath`
+-	### `sach xpath`
 
 	Print the results of an XPath expression evaluated against a set of XHTML files. The default namespace is removed.
 

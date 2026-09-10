@@ -88,7 +88,7 @@ def typogrify(xhtml: str, smart_quotes: bool = True) -> str:
 
 		# Replace `rsquo` character with an escape sequence. We can't use HTML comments because `rsquo` may appear inside `alt` attributes, and that would break `smartypants`.
 		# When we encounter an actual `rsquo`, it's 99% correct as-is.
-		xhtml = xhtml.replace("’", "!#se:rsquo#!")
+		xhtml = xhtml.replace("’", "!#sach:rsquo#!")
 
 		# Have smartypants return unicode characters rather than HTML entities
 		attrs = smartypants.Attr.default | smartypants.Attr.u
@@ -115,7 +115,7 @@ def typogrify(xhtml: str, smart_quotes: bool = True) -> str:
 	xhtml = regex.sub(r"‘”</p>", fr"’{sach.HAIR_SPACE}”</p>", xhtml)
 
 	# Now that we've fixed `smartypants`' output, put our quotes back in.
-	xhtml = xhtml.replace("!#se:rsquo#!", "’")
+	xhtml = xhtml.replace("!#sach:rsquo#!", "’")
 
 	# Remove spaces between en and em dashes.
 	# Note that we match at least one character before the dashes, so that we don't catch start-of-line em dashes like in poetry.

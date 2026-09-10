@@ -1,11 +1,11 @@
 {
-	"venv": "standardebooks",
-	"exclude": ["se/vendor", "build"],
-	"ignore": ["se/vendor", "build"],
+	"venv": "sach",
+	"exclude": ["sach/vendor", "build"],
+	"ignore": ["sach/vendor", "build"],
 	"strictListInference": true,
 	"strictDictionaryInference": true,
 	"strictSetInference": true,
-	"stubPath": "se/vendor/typings",
+	"stubPath": "sach/vendor/typings",
 	"typeCheckingMode": "strict",
 	"reportUnusedImport": true,
 	"reportUnusedClass": true,
@@ -14,5 +14,5 @@
 	"reportDuplicateImport": true,
 	"reportUnreachable": true,
 	"reportUnusedExpression": true,
-	"reportMatchNotExhaustive": true,
+	"reportMatchNotExhaustive": true
 }
