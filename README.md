@@ -314,7 +314,7 @@ We need volunteers to take the lead on the following goals:
 
 -	### `sach create-draft`
 
-	Create the skeleton of a new Vietnamese ebook.
+	Create the skeleton of a new Vietnamese ebook. Use `-l/--language` (e.g. `-l vi`) to set the ebook language up front: it becomes the `dc:language` and the top-level `xml:lang` of every generated document, and for Vietnamese it also keeps the English title-caser from mangling the book title.
 
 -	### `sach css-select`
 
@@ -398,7 +398,8 @@ We need volunteers to take the lead on the following goals:
 
 -	### `sach titlecase`
 
-	Convert a string to titlecase.
+	Convert a string to titlecase. Pass `-l/--language vi` (or any Vietnamese code) to get Vietnamese **sentence case** instead — `Sống mòn`, not `Sống Mòn`.
+
 
 -	### `sach typogrify`
 

@@ -73,6 +73,45 @@ def normalize(text: str) -> str:
 	return unicodedata.normalize("NFC", text)
 
 
+def sentence_case(text: str) -> str:
+	"""
+	Capitalise the first letter of a Vietnamese title, and nothing else.
+
+	Vietnamese book titles are written in sentence case — only the first letter
+	of the title is capitalised, and every following word keeps its ordinary
+	case (`Sống mòn`, not `Sống Mòn`). This is the opposite of the English title
+	case convention, which capitalises every significant word, so the English
+	title-caser must not be run over Vietnamese titles.
+
+	This function only *upper-cases*; it never lower-cases, so proper nouns and
+	acronyms already in the title are left intact. Any leading markup is skipped
+	when looking for the first letter, so `<i>sống mòn</i>` becomes
+	`<i>Sống mòn</i>`.
+
+	INPUTS
+	text: A title, possibly containing inline markup.
+
+	OUTPUTS
+	The title with its first letter capitalised.
+	"""
+
+	in_tag = False
+
+	for index, char in enumerate(text):
+		if char == "<":
+			in_tag = True
+			continue
+		if char == ">":
+			in_tag = False
+			continue
+		if in_tag or not char.isalpha():
+			continue
+
+		return f"{text[:index]}{char.upper()}{text[index + 1:]}"
+
+	return text
+
+
 def has_vietnamese_marks(text: str) -> bool:
 	"""
 	Return whether a string contains Vietnamese diacritics.

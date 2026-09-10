@@ -276,7 +276,7 @@ def _create_draft(args: Namespace, plain_output: bool):
 	transcription_local_path = None
 	transcription_source = None
 	html_parser = etree.HTMLParser()
-	title = sach.formatting.titlecase(args.title.replace("'", "’").replace("...", f"{sach.HAIR_SPACE}…"))
+	title = sach.formatting.titlecase(args.title.replace("'", "’").replace("...", f"{sach.HAIR_SPACE}…"), args.language)
 	sorted_title = regex.sub(r"^(A|An|The) (.+)$", "\\2, \\1", title)
 
 	for author in args.author:
@@ -349,6 +349,24 @@ def _create_draft(args: Namespace, plain_output: bool):
 			_copy_template_file("titlepage.xhtml", content_path / "epub" / "text")
 			_copy_template_file("content.opf", content_path / "epub")
 			_copy_template_file("LICENSE.md", work_path)
+
+		# If a language was supplied, wire it into every generated file: the
+		# `dc:language` element, the root `xml:lang` of each document, and the
+		# `LANG` placeholders the templates leave behind. This stops a
+		# `--white-label` draft for a Vietnamese book from shipping English
+		# `xml:lang` markers or a bare `LANG` placeholder.
+		if args.language:
+			for file_path in (content_path / "epub").rglob("*"):
+				if file_path.suffix not in (".xhtml", ".opf"):
+					continue
+				text = file_path.read_text(encoding="utf-8")
+				updated = (
+					text.replace('xml:lang="en-US"', f'xml:lang="{args.language}"')
+					.replace('xml:lang="LANG"', f'xml:lang="{args.language}"')
+					.replace(">LANG<", f">{args.language}<")
+				)
+				if updated != text:
+					file_path.write_text(updated, encoding="utf-8")
 
 		# Fill out some basic data in the metadata file that will let is generate further variables.
 		with open(content_path / "epub" / "content.opf", "r+", encoding="utf-8") as file:
@@ -976,6 +994,7 @@ def create_draft(plain_output: bool) -> int:
 	source_group.add_argument("-p", "--pg-id", dest="pg_id", type=sach.is_positive_integer, help="The Project Gutenberg ID number of the ebook to download.")
 	parser.add_argument("-r", "--translator", dest="translator", nargs="+", help="A translator of the ebook.")
 	parser.add_argument("-t", "--title", dest="title", required=True, help="The title of the ebook.")
+	parser.add_argument("-l", "--language", dest="language", help="The language of the ebook (ISO 639-1, e.g. `vi`). It becomes the `dc:language` element and the top-level `xml:lang` of every generated document, and for Vietnamese it also stops the English title-caser from mangling the book title.")
 	parser.add_argument("-v", "--verbose", action="store_true", help="Increase output verbosity.")
 	parser.add_argument("-w", "--white-label", action="store_true", help="Create a generic epub skeleton without Sách branding.")
 	args = parser.parse_args()

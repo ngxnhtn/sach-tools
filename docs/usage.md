@@ -78,11 +78,18 @@ into the current directory:
 ```
 mkdir lib && cd lib
 sach create-draft -a "Tác giả" -t "Tựa đề" --white-label  # 1. skeleton in ./
+sach create-draft -a "Nam Cao" -t "Sống mòn" --white-label -l vi  # ...and set the language
 # …drop your chapters into lib/epub/text/*.xhtml… (see layout below)
 sach clean            .   # 2. canonicalise + fix indentation/spacing
 sach build-toc        .   # 3. generate the table of contents + landmarks
 sach build --output-dir=dist .   # 4. package compatible + advanced EPUB
 ```
+
+`create-draft -l/--language` wires the language into the skeleton: it becomes
+the `dc:language`, the top-level `xml:lang` of every generated document (so you
+don't have to fix `en-US`/`LANG` yourself), and for a Vietnamese code it also
+keeps the English title-caser from mangling the book title — `Sống mòn` stays
+`Sống mòn` instead of becoming `Sống Mòn`.
 
 Notes:
 
@@ -116,9 +123,11 @@ These are the commands you will reach for most when editing Vietnamese text:
 - `sach find-unusual-characters` — find characters outside an expected range.
 - `sach clean` — canonicalise markup and fix spacing/indentation.
 
-English-centric commands that make little sense for Vietnamese (`titlecase`,
-`british2american`, `modernize-spelling`) still exist for completeness but are
-not normally used on Vietnamese books.
+English-centric commands that make little sense for Vietnamese still exist
+for completeness but are not normally used on Vietnamese books. `titlecase` is
+language-aware: pass `-l vi` (or any Vietnamese code) and it returns the title
+in Vietnamese **sentence case** (`Sống mòn`, not `Sống Mòn`) instead of English
+title case.
 
 ---
 
@@ -144,6 +153,14 @@ For Vietnamese books, `sach lint` reports several English-centric rules as
 false positives (titlecase, punctuation-in-italics, `<title>` format). Treat
 those as informational; the language-agnostic rules (structure, metadata,
 links, semantics) are what matter.
+
+Most of them are now suppressed automatically: when an ebook's `<dc:language>`
+is a Vietnamese code, `sach lint` compares headings and name titles against
+Vietnamese sentence case instead of English title case, so the titlecase
+warnings (`s-023`, `t-064`) stop firing for Vietnamese books. The remaining
+English word that is hard to localise is the ToC's titlepage label, which the
+toolset hardcodes as "Titlepage" (`m-045`); record a translation in a root
+`se-lint-ignore.xml` if you want to replace it.
 
 ---
 

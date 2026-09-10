@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 	from sach.sach_epub_build import BuildMessage # Import under type checking guard to prevent circular import error.
 
 
-VERSION = "4.1.0"
+VERSION = "4.2.0"
 MESSAGE_INDENT = "    "
 COLOR_OUTPUT = False
 UNICODE_BOM = "\ufeff"

@@ -1,0 +1,5 @@
+m-036 [Error] content.opf Variable not replaced with value.
+ Line 7:        RIGHTS
+ Line 9:        PUBLISHER_NAME
+ Line 10:       PUBLISHER_SORT
+ Line 11:       PUBLISHER_URL

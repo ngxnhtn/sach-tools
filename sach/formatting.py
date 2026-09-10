@@ -1296,16 +1296,26 @@ def get_ordinal(number: str) -> str:
 	value = int(number)
 	return "%d%s" % (value, "tsnrhtdd"[(math.floor(value / 10) % 10 != 1) * (value % 10 < 4) * value % 10::4]) # pylint: disable=consider-using-f-string
 
-def titlecase(text: str) -> str:
+def titlecase(text: str, language: str | None = None) -> str:
 	"""
 	Titlecase a string according to SE house style.
 
 	INPUTS
 	text: The string to titlecase
+	language: An optional ISO language code for the text. Vietnamese does not
+	use title case, so passing a Vietnamese code returns the title in sentence
+	case instead (see below).
 
 	OUTPUTS
 	A titlecased version of the input string
 	"""
+
+	# Vietnamese titles are written in sentence case, not title case, so running
+	# the English title-caser over them is wrong: it would capitalise every word
+	# of `Sống mòn` and produce `Sống Mòn`. Short-circuit it, the same way
+	# `hyphenate` is a no-op for Vietnamese.
+	if sach.vietnamese.is_vietnamese(language):
+		return sach.vietnamese.sentence_case(text)
 
 	# For some reason, `pip_titlecase()` doesn't do anything if the string is mostly (but not all) uppercase.
 	# For example `STOPPING BY WOODS ON a SNOWY EVENING` would not be changed by `pip_titlecase()`.

@@ -1,3 +1,25 @@
+# 4.2.0
+
+## Vietnamese editorial improvements
+
+- `sach titlecase` is now language-aware: `-l/--language vi` (or any Vietnamese
+  code) returns the string in Vietnamese **sentence case** (`Sống mòn`, not
+  `Sống Mòn`). This mirrors the existing `hyphenate -l vi` no-op for the other
+  English-centric convention that doesn't apply to Vietnamese.
+- `sach create-draft` gained a `-l/--language` option. It becomes the
+  `dc:language`, the top-level `xml:lang` of every generated document (no more
+  hand-fixing `en-US` or a bare `LANG` placeholder), and for Vietnamese it keeps
+  the English title-caser from mangling the book title.
+- `sach lint` no longer compares Vietnamese book headings and name titles
+  against English title case. When the ebook's `<dc:language>` is a Vietnamese
+  code, the `s-023` and `t-064` “title not correctly titlecased” messages stop
+  firing, so you don't have to sprinkle `xml:lang` attributes or a
+  `se-lint-ignore.xml` just to silence them.
+- `lint` metadata variable checking (`m-036`) now also inspects attribute
+  values, so placeholders like `<link href="PUBLISHER_URL">` are caught, and it
+  recognises the white-label template placeholders `RIGHTS`, `PUBLISHER_NAME`,
+  `PUBLISHER_SORT`, and `PUBLISHER_URL` that previously escaped detection.
+
 # 4.1.0
 
 ## General

@@ -77,3 +77,30 @@ def test_typogrify_composes_vietnamese_marks() -> None:
 	assert sach.vietnamese.normalize(result) == result
 	mark_count_after = result.count("\u0300") + result.count("\u0301") + result.count("\u0309") + result.count("\u0323") + result.count("\u0303")
 	assert mark_count_after < mark_count_before or mark_count_after == 0
+
+def test_sentence_case_capitalises_first_letter_only() -> None:
+	# A Vietnamese title is written in sentence case: only the first letter of
+	# the title is capitalised, and nothing is re-cased.
+	assert vietnamese.sentence_case("sống mòn") == "Sống mòn"
+	# Idempotent for an already-correct title.
+	assert vietnamese.sentence_case("Sống mòn") == "Sống mòn"
+	# Proper nouns keep their case.
+	assert vietnamese.sentence_case("hà nội và sài gòn") == "Hà nội và sài gòn"
+	# Leading markup is skipped when finding the first letter.
+	assert vietnamese.sentence_case("<i>sống mòn</i>") == "<i>Sống mòn</i>"
+	# Non-letter prefixes are skipped too.
+	assert vietnamese.sentence_case("123 abc") == "123 Abc"
+	# A string with no letters is returned unchanged.
+	assert vietnamese.sentence_case("---") == "---"
+	assert vietnamese.sentence_case("") == ""
+
+
+def test_titlecase_is_sentence_case_for_vietnamese() -> None:
+	# The English title-caser would wrongly produce "Sống Mòn"; for a Vietnamese
+	# language the result must be sentence case.
+	assert sach.formatting.titlecase("sống mòn", "vi") == "Sống mòn"
+	assert sach.formatting.titlecase("sống mòn", "vi-VN") == "Sống mòn"
+	# English keeps its own convention when no (or a non-Vietnamese) language is
+	# given.
+	assert sach.formatting.titlecase("the cat in the hat") == "The Cat in the Hat"
+	assert sach.formatting.titlecase("the cat in the hat", "vi") == "The cat in the hat"

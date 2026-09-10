@@ -92,7 +92,14 @@ SACH_VARIABLES = [
 	"TRANSCRIPTION_YEAR",
 	"TRANSCRIBER_1_NAME",
 	"TRANSCRIBER_2_NAME",
-	"PAINTING"
+	"PAINTING",
+	# White-label template placeholders that the forked templates introduce.
+	# Note `WORD_COUNT` is deliberately excluded: `m-065` treats the literal
+	# `WORD_COUNT` as a tolerated placeholder that `sach prepare-release` fills.
+	"PUBLISHER_NAME",
+	"PUBLISHER_SORT",
+	"PUBLISHER_URL",
+	"RIGHTS",
 ]
 
 ABBR_REQUIRING_STYLES = ["se:era", "se:temperature", "z3998:acronym"]
@@ -966,9 +973,14 @@ def _lint_metadata_checks(self: 'SachEpub') -> list[LintMessage]:
 
 	missing_metadata_vars: list[LintSubmessage] = []
 	for node in self.metadata_dom.xpath("/package/metadata/*[re:test(., '[A-Z_]{2,}') or re:test(@*, '[A-Z_]{2,}')]"):
+		# Placeholders can live in the element text or in an attribute value
+		# (e.g. `<link href="PUBLISHER_URL">`), so search both.
+		haystacks = [node.text or ""] + list(node.lxml_element.attrib.values())
 		for var in SACH_VARIABLES:
-			if regex.search(fr"\b{var}\b", node.text):
-				missing_metadata_vars.append(LintSubmessage(var, node.sourceline))
+			for haystack in haystacks:
+				if regex.search(fr"\b{var}\b", haystack):
+					missing_metadata_vars.append(LintSubmessage(var, node.sourceline))
+					break
 
 	if missing_metadata_vars:
 		messages.append(LintMessage("m-036", "Variable not replaced with value.", sach.MESSAGE_TYPE_ERROR, self.metadata_file_path, missing_metadata_vars))
@@ -2286,9 +2298,9 @@ def _lint_xhtml_syntax_checks(self: 'SachEpub', source_file: SourceFile, dom: Ea
 		subtitle_matches = regex.findall(r"(.*?)<span epub:type=\"subtitle\">(.*?)</span>(.*?)", title, flags=regex.DOTALL)
 		if subtitle_matches:
 			for title_header, subtitle, title_footer in subtitle_matches:
-				title_header = sach.formatting.titlecase(sach.formatting.remove_tags(title_header).strip())
-				subtitle = sach.formatting.titlecase(sach.formatting.remove_tags(subtitle).strip())
-				title_footer = sach.formatting.titlecase(sach.formatting.remove_tags(title_footer).strip())
+				title_header = sach.formatting.titlecase(sach.formatting.remove_tags(title_header).strip(), language)
+				subtitle = sach.formatting.titlecase(sach.formatting.remove_tags(subtitle).strip(), language)
+				title_footer = sach.formatting.titlecase(sach.formatting.remove_tags(title_footer).strip(), language)
 
 				titlecased_title = f"{title_header} {subtitle} {title_footer}"
 				titlecased_title = titlecased_title.strip()
@@ -2299,7 +2311,7 @@ def _lint_xhtml_syntax_checks(self: 'SachEpub', source_file: SourceFile, dom: Ea
 
 		# No subtitle? Much more straightforward.
 		else:
-			titlecased_title = sach.formatting.titlecase(sach.formatting.remove_tags(title))
+			titlecased_title = sach.formatting.titlecase(sach.formatting.remove_tags(title), language)
 			title = sach.formatting.remove_tags(title)
 			if title != titlecased_title:
 				incorrectly_titlecased_titles.append(LintSubmessage(f"Found: {title}\nExpected: {titlecased_title}", node.sourceline))
@@ -2733,7 +2745,7 @@ def _lint_xhtml_syntax_checks(self: 'SachEpub', source_file: SourceFile, dom: Ea
 
 	return messages
 
-def _lint_xhtml_typography_checks(self: 'SachEpub', source_file: SourceFile, dom: EasyXmlTree, special_file: str | None, ebook_flags: dict[str, bool], missing_files: list[str]) -> tuple[list[LintMessage], list[str]]:
+def _lint_xhtml_typography_checks(self: 'SachEpub', source_file: SourceFile, dom: EasyXmlTree, special_file: str | None, ebook_flags: dict[str, bool], language: str, missing_files: list[str]) -> tuple[list[LintMessage], list[str]]:
 	"""
 	Process typography checks on an `.xhtml` file.
 
@@ -2742,6 +2754,7 @@ def _lint_xhtml_typography_checks(self: 'SachEpub', source_file: SourceFile, dom
 	dom: The DOM of the file being checked.
 	special_file: A string containing the type of special file the current file is, if any.
 	ebook_flags: A dictionary containing several flags about an ebook.
+	language: The language of the current ebook.
 	missing_files: A list of missing files.
 	self
 
@@ -3190,12 +3203,13 @@ def _lint_xhtml_typography_checks(self: 'SachEpub', source_file: SourceFile, dom
 		messages.append(LintMessage("t-063", "Non-English confusable phrase set without italics.", sach.MESSAGE_TYPE_WARNING, filename, LintSubmessage.from_nodes(nodes)))
 
 	# Check that all names are correctly titlecased. Ignore titles with `xml:lang` since non-English languages have different titlecasing rules, and ignore titles that have children elements, because `sach.titlecase()` can't handle XML-like titles right now.
+	# The ebook's own language is passed through as well, so that e.g. Vietnamese titles are compared against sentence case rather than English title case.
 	# Ignore titles longer than 150 characters, as long titles are likely old-timey super-long titles that should be mostly sentence-cased.
 	incorrectly_cased_titles: list[LintSubmessage] = []
 	for node in dom.xpath("/html/body//*[contains(@epub:type, 'se:name') and not(contains(@epub:type, 'se:name.legal-case')) and not(@xml:lang) and not(./*) and string-length(.) <= 150]"):
 		# Replace any space that is not a hair space or nbsp with a regular space.
 		# Ignore this if we're in the colophon and we matched with `PAINTING`, because we'll also output m-036 to alert us of this missing variable.
-		if sach.formatting.titlecase(node.inner_text()) != regex.sub(fr"[^\S{sach.HAIR_SPACE}{sach.NO_BREAK_SPACE}]+", " ", node.inner_text()) and not (dom.xpath("/html/body//section[contains(@epub:type, 'colophon')]") and node.inner_text() == "PAINTING"):
+		if sach.formatting.titlecase(node.inner_text(), language) != regex.sub(fr"[^\S{sach.HAIR_SPACE}{sach.NO_BREAK_SPACE}]+", " ", node.inner_text()) and not (dom.xpath("/html/body//section[contains(@epub:type, 'colophon')]") and node.inner_text() == "PAINTING"):
 			incorrectly_cased_titles.append(LintSubmessage(node.to_string(), node.sourceline))
 
 	if incorrectly_cased_titles:
@@ -4291,7 +4305,7 @@ def lint(self: 'SachEpub', skip_lint_ignore: bool, allowed_messages: list[str] |
 
 				messages += _lint_xhtml_syntax_checks(self, source_file, dom, ebook_flags, language, section_tree)
 
-				(typography_messages, missing_files) = _lint_xhtml_typography_checks(self, source_file, dom, special_file, ebook_flags, missing_files)
+				(typography_messages, missing_files) = _lint_xhtml_typography_checks(self, source_file, dom, special_file, ebook_flags, language, missing_files)
 				messages += typography_messages
 
 				messages += _lint_xhtml_xhtml_checks(source_file, dom)
