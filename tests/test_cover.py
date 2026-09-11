@@ -121,3 +121,31 @@ def test_vietnamese_tone_marks_are_actually_drawn() -> None:
 		kinds = [kind for kind, _ in profile(char)]
 		assert kinds.count("gap") >= 1, f"{char!r} produced no gap — the mark wasn't drawn"
 		assert kinds.count("ink") >= 2, f"{char!r} produced a single block (tofu)"
+
+
+def test_resolve_cover_size_defaults_to_3x4() -> None:
+	assert sach.cover.resolve_cover_size(None) == (900, 1200)
+	assert sach.cover.resolve_cover_size("") == (900, 1200)
+
+
+def test_resolve_cover_size_named_formats() -> None:
+	assert sach.cover.resolve_cover_size("3:4") == (900, 1200)
+	assert sach.cover.resolve_cover_size("3x4") == (900, 1200)
+	assert sach.cover.resolve_cover_size("2:3") == (1200, 1800)
+	assert sach.cover.resolve_cover_size("1:1") == (1200, 1200)
+	assert sach.cover.resolve_cover_size("16:9") == (1600, 900)
+	# Case-insensitive.
+	assert sach.cover.resolve_cover_size("3:4".upper()) == (900, 1200)
+
+
+def test_resolve_cover_size_explicit_dimensions() -> None:
+	assert sach.cover.resolve_cover_size("900x1200") == (900, 1200)
+	assert sach.cover.resolve_cover_size("900:1200") == (900, 1200)
+	# Leading/trailing whitespace is tolerated.
+	assert sach.cover.resolve_cover_size("  600x800  ") == (600, 800)
+
+
+def test_resolve_cover_size_rejects_garbage() -> None:
+	for bad in ("banana", "0x800", "1200x", "x1200", "12x34x56"):
+		with pytest.raises(ValueError):
+			sach.cover.resolve_cover_size(bad)

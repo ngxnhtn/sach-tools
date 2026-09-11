@@ -45,7 +45,7 @@ def build_cover(plain_output: bool) -> int:
 	parser.add_argument("-t", "--title", dest="title", help="The title, if the ebook directory doesn’t provide one.")
 	parser.add_argument("-l", "--label", dest="label", help="A short genre label printed near the foot of the cover, e.g. [text]Tiểu thuyết[/]. Defaults to the book’s genre when it has one.")
 	parser.add_argument("-o", "--output", dest="output", help="Where to write the JPEG. Defaults to [path]<DIRECTORY>/epub/images/cover.jpg[/].")
-	parser.add_argument("-s", "--size", dest="size", default="1200x1800", help="Cover size as [text]WIDTHxHEIGHT[/]. Defaults to [text]1200x1800[/].")
+	parser.add_argument("-f", "--format", "--size", dest="format", help="A named cover format: [text]3:4[/] (default), [text]2:3[/], [text]1:1[/], [text]16:9[/], or an explicit [text]WIDTHxHEIGHT[/].")
 	parser.add_argument("--theme", dest="theme", help="Force a palette instead of choosing one from the book’s metadata. Use [flag]--list-themes[/] to see the options.")
 	parser.add_argument("--list-themes", dest="list_themes", action="store_true", help="List the available cover themes and exit.")
 	parser.add_argument("--overwrite", dest="overwrite", action="store_true", help="Overwrite an existing cover file. Without this, an existing cover is left alone.")
@@ -97,9 +97,9 @@ def build_cover(plain_output: bool) -> int:
 		return sach.InvalidInputException.code
 
 	try:
-		width, height = (int(part) for part in args.size.lower().split("x", 1))
-	except ValueError:
-		sach.print_error(f"Couldn’t parse size [text]{args.size}[/]; expected something like [text]1200x1800[/].", plain_output=plain_output)
+		width, height = sach.cover.resolve_cover_size(args.format)
+	except ValueError as ex:
+		sach.print_error(f"{ex}", plain_output=plain_output)
 		return sach.InvalidInputException.code
 
 	if output_path.is_file() and not args.overwrite:

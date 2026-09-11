@@ -145,9 +145,11 @@ sach build-cover -t "Sống mòn" -a "Nam Cao" -o cover.jpg --theme paper
 - The **palette** comes from `schema:genre` first, then `dc:subject` (English or
   Vietnamese words both work), and finally from a stable hash of the title, so a
   book with no genre metadata still gets a consistent cover of its own.
-- The cover is a 1200×1800 JPEG: a themed ground, a ruled frame, the author, the
-  title set in a Vietnamese-capable serif, and a genre label. `-s WIDTHxHEIGHT`
-  changes the size; `--theme` forces a palette.
+- The cover is a JPEG: a themed ground, a ruled frame, the author, the title set
+  in a Vietnamese-capable serif, and a genre label. The default format is a **3:4
+  portrait, 900×1200**. `-f/--format` picks a named ratio — `3:4` (default),
+  `2:3`, `1:1`, or `16:9` — or an explicit `WIDTHxHEIGHT`; `--size` is kept as an
+  alias for the old spelling. `--theme` forces a palette.
 - Run it on a source folder to read the metadata, or pass `-t`/`-a` directly.
   Without `--overwrite` an existing cover is left alone.
 

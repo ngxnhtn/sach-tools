@@ -128,6 +128,56 @@ def list_themes() -> list[str]:
 	return sorted(THEMES)
 
 
+# Named cover formats. The default (and the house convention for Vietnamese
+# books) is a 3:4 portrait, 900×1200 — a generous canvas that crops cleanly to
+# the 2:3 ebook publishers usually ask for.
+COVER_FORMATS: dict[str, tuple[int, int]] = {
+	"3x4": (900, 1200),
+	"3:4": (900, 1200),
+	"2x3": (1200, 1800),
+	"2:3": (1200, 1800),
+	"1x1": (1200, 1200),
+	"1:1": (1200, 1200),
+	"16x9": (1600, 900),
+	"16:9": (1600, 900),
+}
+
+
+def resolve_cover_size(value: str | None) -> tuple[int, int]:
+	"""
+	Turn a size argument into a `(width, height)` tuple.
+
+	Accepts either a named format (`3:4`, `2:3`, `1:1`, `16:9`) or an explicit
+	`WIDTHxHEIGHT` pair. When nothing is given, returns the house 3:4 format.
+
+	INPUTS
+	value: The size string, or `None` to use the default.
+
+	OUTPUTS
+	A `(width, height)` tuple.
+
+	RAISES
+	ValueError when the string is neither a known format nor a valid `WxH` pair.
+	"""
+
+	if not value:
+		return COVER_FORMATS["3:4"]
+
+	normalized = value.strip().lower().replace("x", ":")
+	if normalized in COVER_FORMATS:
+		return COVER_FORMATS[normalized]
+
+	# Accept both "900x1200" and "900:1200".
+	try:
+		width, height = (int(part) for part in normalized.split(":", 1))
+		if width > 0 and height > 0:
+			return (width, height)
+	except ValueError:
+		pass
+
+	raise ValueError(f"Couldn’t parse size [text]{value}[/]; expected a format like [text]3:4[/] or a size like [text]900x1200[/].")
+
+
 def select_theme(title: str, genres: list[str] | None = None, subjects: list[str] | None = None, override: str | None = None) -> Theme:
 	"""
 	Choose a palette for a book.
